@@ -4,7 +4,7 @@
 // localStorage keys:
 //
 // tlc_messages         → [{ id, sender, text, time }]
-// tlc_parsed           → [{ idx, msgId, worker, date, hours, jobSite, region, raw, status, confidence, flagReason? }]
+// tlc_parsed           → [{ idx, msgId, worker, date, hours, jobSite, region, raw, sentBy, status, confidence, flagReason? }]
 // tlc_region_overrides → { "torrance": "socal" } — manual city→region corrections
 //
 // External API: Groq via Cloudflare Worker proxy
@@ -331,7 +331,7 @@ function buildResults(aiEntries) {
       results.push({
         idx: nextIdx++, msgId: ai.msgId, worker: ai?.worker || sender,
         date: '', hours: 0, jobSite: '', region: 'unknown', raw: rawText,
-        status: 'flagged', confidence: 'none',
+        sentBy: sender, status: 'flagged', confidence: 'none',
         flagReason: 'Couldn\'t extract hours — needs manual entry',
       });
     } else {
@@ -344,7 +344,7 @@ function buildResults(aiEntries) {
       results.push({
         idx: nextIdx++, msgId: ai.msgId, worker: ai.worker || sender,
         date: ai.date || localDateStr(), hours: parseFloat(ai.hours) || 0,
-        jobSite, region, raw: rawText,
+        jobSite, region, raw: rawText, sentBy: sender,
         status: isFlagged ? 'flagged' : 'clean', confidence: ai.confidence,
         flagReason: isFlagged ? 'Low confidence — please verify' : undefined,
       });
@@ -514,7 +514,7 @@ function submitManualEntry() {
   parsed.push({
     idx: nextIdx++, msgId: null, worker, date: date || localDateStr(),
     hours, jobSite: jobSite || 'Not specified', region,
-    raw: '(manual entry)', status: 'clean', confidence: 'manual',
+    raw: '(manual entry)', sentBy: 'Manual', status: 'clean', confidence: 'manual',
   });
 
   saveState(); renderAll(); closeModal();
@@ -557,6 +557,7 @@ function renderParsed() {
       <td><span class="editable" onclick="editCell(this,${row.idx},'hours')">${row.hours}</span></td>
       <td><span class="editable" onclick="editCell(this,${row.idx},'jobSite')">${escapeHtml(row.jobSite)}</span></td>
       <td><span class="region-tag ${row.region} clickable" onclick="changeRegion(${row.idx},'${row.region}')">${regionLabel(row.region)}</span></td>
+      <td><span class="sent-by">${escapeHtml(row.sentBy || '—')}</span></td>
       <td><button class="btn-delete" onclick="deleteRow(${row.idx})">✕</button></td>
     `;
     tbody.appendChild(tr);
@@ -611,6 +612,7 @@ function renderHoursSheet(filter = '') {
       <td><span class="editable" onclick="editCell(this,${row.idx},'hours')">${row.hours || '—'}</span></td>
       <td><span class="editable" onclick="editCell(this,${row.idx},'jobSite')">${escapeHtml(row.jobSite) || '—'}</span></td>
       <td><span class="region-tag ${row.region} clickable" onclick="changeRegion(${row.idx},'${row.region}')">${regionLabel(row.region)}</span></td>
+      <td><span class="sent-by">${escapeHtml(row.sentBy || '—')}</span></td>
       <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8892a8;font-size:12px;">${escapeHtml(row.raw)}</td>
       <td><span class="status-tag ${row.status}">${row.status === 'clean' ? '✅' : '⚠️'}</span></td>
       <td><button class="btn-delete" onclick="deleteRow(${row.idx})">✕</button></td>
@@ -781,9 +783,9 @@ function filterByPeriod(rows, period) {
 function exportCSV() {
   if (!parsed.length) { showToast('Nothing to export yet'); return; }
   const clean = parsed.filter(p => p.status === 'clean');
-  let csv = 'Worker,Date,Hours,Job Site,Region,Status\n';
+  let csv = 'Worker,Date,Hours,Job Site,Region,Sent By,Status\n';
   clean.forEach(r => {
-    csv += `"${r.worker}","${r.date}",${r.hours},"${r.jobSite}","${regionLabel(r.region)}","${r.status}"\n`;
+    csv += `"${r.worker}","${r.date}",${r.hours},"${r.jobSite}","${regionLabel(r.region)}","${r.sentBy || ''}","${r.status}"\n`;
   });
   const blob = new Blob([csv], { type: 'text/csv' });
   const a = document.createElement('a');

@@ -186,14 +186,24 @@ function renderMessages() {
     const parsedRows = parsed.filter(p => p.msgId === msg.id);
     const hasClean = parsedRows.some(p => p.status === 'clean');
     const hasFlagged = parsedRows.some(p => p.status === 'flagged');
-    const statusClass = parsedRows.length ? (hasFlagged && !hasClean ? 'messy' : 'clean') : '';
-    bubble.className = 'text-bubble ' + statusClass;
+    const isFlagged = hasFlagged && !hasClean;
+
+    // Get region from parsed entries for color coding
+    const region = parsedRows.length ? (parsedRows.find(p => p.region !== 'unknown')?.region || 'unknown') : '';
+
+    bubble.className = 'text-bubble';
+    if (isFlagged) {
+      bubble.classList.add('messy');
+    } else if (parsedRows.length && region) {
+      bubble.classList.add('region-' + region);
+    }
     if (parsedRows.length) bubble.classList.add('parsed');
 
     const countTag = parsedRows.length > 1 ? `<span class="extract-count">${parsedRows.length} entries extracted</span>` : '';
+    const regionDot = parsedRows.length && !isFlagged && region ? `<span class="bubble-region">${regionLabel(region)}</span>` : '';
 
     bubble.innerHTML = `
-      <div class="sender">${escapeHtml(msg.sender)}</div>
+      <div class="sender">${escapeHtml(msg.sender)} ${regionDot}</div>
       <div>${escapeHtml(msg.text)}</div>
       <div class="time">${msg.time} ${countTag}</div>
     `;

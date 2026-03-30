@@ -19,15 +19,39 @@
     <div class="topbar-right">
       <button class="tab-btn active" data-tab="intake">Incoming Texts</button>
       <button class="tab-btn" data-tab="hours">Hours Sheet</button>
+      <button class="tab-btn" data-tab="summary">Summary</button>
       <button class="tab-btn" data-tab="regions">By Region</button>
     </div>
   </header>
+
+  <!-- ─── STATS BAR ───────────────────────────────────── -->
+  <div class="stats-bar" id="stats-bar" style="display:none">
+    <div class="stat-card">
+      <div class="stat-number" id="sb-entries">0</div>
+      <div class="stat-label">Total Entries</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" id="sb-hours">0</div>
+      <div class="stat-label">Total Hours</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" id="sb-workers">0</div>
+      <div class="stat-label">Workers</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number" id="sb-projects">0</div>
+      <div class="stat-label">Job Sites</div>
+    </div>
+    <div class="stat-card warn" id="sb-flagged-card" style="display:none">
+      <div class="stat-number" id="sb-flagged">0</div>
+      <div class="stat-label">Need Review</div>
+    </div>
+  </div>
 
   <!-- ─── TAB 1: INCOMING TEXTS ──────────────────────── -->
   <main id="tab-intake" class="tab-content active">
     <div class="intake-layout">
 
-      <!-- Left: Phone mockup with texts -->
       <div class="phone-panel">
         <div class="phone-header">
           <span class="phone-label">📱 Incoming Worker Texts</span>
@@ -40,7 +64,6 @@
         </div>
       </div>
 
-      <!-- Right: Parsed results -->
       <div class="results-panel">
         <div class="results-header">
           <h2>Parsed Results</h2>
@@ -50,7 +73,6 @@
           </div>
         </div>
 
-        <!-- Clean rows -->
         <div class="results-section" id="clean-section" style="display:none">
           <h3>✅ Ready for Sheet</h3>
           <div class="table-wrap">
@@ -62,6 +84,7 @@
                   <th>Hours</th>
                   <th>Job Site</th>
                   <th>Region</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody id="clean-tbody"></tbody>
@@ -69,13 +92,11 @@
           </div>
         </div>
 
-        <!-- Flagged rows -->
         <div class="results-section flagged-section" id="flagged-section" style="display:none">
           <h3>⚠️ Needs Review</h3>
           <div id="flagged-list"></div>
         </div>
 
-        <!-- Empty state -->
         <div class="empty-state" id="empty-state">
           <p>Hit <strong>"Process Messages"</strong> to parse worker texts into clean rows</p>
         </div>
@@ -87,9 +108,10 @@
   <!-- ─── TAB 2: FULL HOURS SHEET ────────────────────── -->
   <main id="tab-hours" class="tab-content">
     <div class="sheet-header">
-      <h2>📋 Hours Sheet — All Workers</h2>
+      <h2>📋 Hours Sheet</h2>
       <div class="sheet-actions">
         <input type="text" id="search-hours" placeholder="Search by name, site, region..." class="search-input">
+        <button class="btn-ghost" id="btn-add-manual">+ Add Entry</button>
         <button class="btn-primary" id="btn-export-csv">Export CSV</button>
       </div>
     </div>
@@ -104,6 +126,7 @@
             <th>Region</th>
             <th>Raw Message</th>
             <th>Status</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="hours-tbody"></tbody>
@@ -114,28 +137,82 @@
     </div>
   </main>
 
-  <!-- ─── TAB 3: BY REGION ───────────────────────────── -->
+  <!-- ─── TAB 3: SUMMARY ─────────────────────────────── -->
+  <main id="tab-summary" class="tab-content">
+    <div class="sheet-header">
+      <h2>📊 Summary</h2>
+      <div class="sheet-actions">
+        <select id="summary-period" class="search-input">
+          <option value="week">This Week</option>
+          <option value="month" selected>This Month</option>
+          <option value="all">All Time</option>
+        </select>
+        <select id="summary-view" class="search-input">
+          <option value="worker" selected>By Worker</option>
+          <option value="project">By Job Site</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="summary-totals" id="summary-totals"></div>
+
+    <!-- Summary table -->
+    <div class="table-wrap full-table" id="summary-table-wrap" style="display:none">
+      <table id="summary-table">
+        <thead id="summary-thead"></thead>
+        <tbody id="summary-tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="empty-state" id="summary-empty">
+      <p>No data yet. Process some messages first.</p>
+    </div>
+  </main>
+
+  <!-- ─── TAB 4: BY REGION ───────────────────────────── -->
   <main id="tab-regions" class="tab-content">
     <div class="sheet-header">
-      <h2>🗺️ Hours by Region — Monthly Report View</h2>
+      <h2>🗺️ Hours by Region</h2>
       <div class="sheet-actions">
-        <select id="region-month" class="search-input">
-          <option value="2026-03">March 2026</option>
-          <option value="2026-02">February 2026</option>
-          <option value="2026-01">January 2026</option>
+        <select id="region-period" class="search-input">
+          <option value="week">This Week</option>
+          <option value="month" selected>This Month</option>
+          <option value="all">All Time</option>
         </select>
         <button class="btn-primary" id="btn-export-regions">Export All Regions</button>
       </div>
     </div>
 
-    <div class="region-cards" id="region-cards">
-      <!-- Filled by JS -->
-    </div>
+    <div class="region-cards" id="region-cards"></div>
 
     <div class="empty-state" id="regions-empty">
       <p>No hours to sort yet. Process worker texts first.</p>
     </div>
   </main>
+
+  <!-- ─── MANUAL ENTRY MODAL ─────────────────────────── -->
+  <div class="modal-overlay" id="modal-add" style="display:none" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <h3>Add Hours Manually</h3>
+      <p style="color:#8892a8;font-size:13px;margin-bottom:16px;">For when someone calls or you need to add an entry yourself.</p>
+      <div class="modal-form">
+        <input id="manual-worker" class="edit-input" placeholder="Worker name" style="width:100%">
+        <input id="manual-date" class="edit-input" type="date" style="width:100%">
+        <input id="manual-hours" class="edit-input" type="number" step="0.5" placeholder="Hours" style="width:100%">
+        <input id="manual-site" class="edit-input" placeholder="Job site / city" style="width:100%">
+        <select id="manual-region" class="edit-input" style="width:100%">
+          <option value="socal">SoCal</option>
+          <option value="norcal">NorCal</option>
+          <option value="sandiego">San Diego</option>
+        </select>
+        <div style="display:flex;gap:10px;margin-top:8px;">
+          <button class="btn-primary" onclick="submitManualEntry()" style="flex:1">Add Entry</button>
+          <button class="btn-ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="utils.js" defer></script>
   <script src="app.js" defer></script>

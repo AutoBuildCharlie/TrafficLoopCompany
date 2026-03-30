@@ -3,11 +3,11 @@
 // ================================================================
 // localStorage keys:
 //
-// tlc_messages        → [{ id, sender, text, time }]
-// tlc_parsed          → [{ msgId, worker, date, hours, jobSite, region, raw, status, confidence, flagReason? }]
-// tlc_region_overrides → { "torrance": "socal", "temecula": "socal" } — aunt's manual corrections
+// tlc_messages         → [{ id, sender, text, time }]
+// tlc_parsed           → [{ idx, msgId, worker, date, hours, jobSite, region, raw, status, confidence, flagReason? }]
+// tlc_region_overrides → { "torrance": "socal" } — manual city→region corrections
 //
-// External API: Groq via Cloudflare Worker proxy (fittrack-proxy.aestheticcal22.workers.dev)
+// External API: Groq via Cloudflare Worker proxy
 // Model: llama-3.3-70b-versatile
 // ================================================================
 
@@ -18,7 +18,7 @@ const GROQ_PROXY = 'https://fittrack-proxy.aestheticcal22.workers.dev';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 // ================================================================
-//  DEMO DATA — realistic foreman crew texts + individual worker texts
+//  DEMO DATA
 // ================================================================
 const DEMO_MESSAGES = [
   { id: 1,  sender: 'Rick Salazar (Foreman)',  text: 'Anaheim loop install today — Luis 8, Jose 7.5, Mario 8, Mike 8.5',                     time: '3:45 PM' },
@@ -40,6 +40,7 @@ let messages = [];
 let parsed = [];
 let regionOverrides = {};
 let isProcessing = false;
+let nextIdx = 0;
 
 // ================================================================
 //  INIT
@@ -48,6 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadState();
   renderMessages();
   renderParsed();
+  updateStatsBar();
   setupTabs();
   setupButtons();
 });
@@ -63,8 +65,20 @@ function setupTabs() {
       btn.classList.add('active');
       document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
       if (btn.dataset.tab === 'hours') renderHoursSheet();
+      if (btn.dataset.tab === 'summary') renderSummary();
       if (btn.dataset.tab === 'regions') renderRegionCards();
     });
+  });
+}
+
+function updateTabBadges() {
+  const flagged = parsed.filter(p => p.status === 'flagged').length;
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    const existing = btn.querySelector('.tab-badge');
+    if (existing) existing.remove();
+    if (btn.dataset.tab === 'intake' && flagged > 0) {
+      btn.insertAdjacentHTML('beforeend', `<span class="tab-badge">${flagged}</span>`);
+    }
   });
 }
 
@@ -76,11 +90,12 @@ function setupButtons() {
   $('btn-reset-texts').addEventListener('click', resetDemo);
   $('btn-export-csv').addEventListener('click', exportCSV);
   $('btn-export-regions').addEventListener('click', exportRegions);
+  $('btn-add-manual').addEventListener('click', openManualEntry);
 
-  const searchInput = $('search-hours');
-  if (searchInput) {
-    searchInput.addEventListener('input', debounce(() => renderHoursSheet(searchInput.value), 200));
-  }
+  $('search-hours').addEventListener('input', debounce(() => renderHoursSheet($('search-hours').value), 200));
+  $('summary-period').addEventListener('change', renderSummary);
+  $('summary-view').addEventListener('change', renderSummary);
+  $('region-period').addEventListener('change', renderRegionCards);
 }
 
 // ================================================================
@@ -95,15 +110,46 @@ function loadState() {
     messages = [...DEMO_MESSAGES];
     storageSet('tlc_messages', messages);
   }
-  if (!parsed) {
-    parsed = [];
-  }
+  if (!parsed) parsed = [];
+
+  // Set nextIdx higher than any existing
+  nextIdx = parsed.length ? Math.max(...parsed.map(p => p.idx)) + 1 : 0;
 }
 
 function saveState() {
   storageSet('tlc_messages', messages);
   storageSet('tlc_parsed', parsed);
   storageSet('tlc_region_overrides', regionOverrides);
+}
+
+// ================================================================
+//  STATS BAR
+// ================================================================
+function updateStatsBar() {
+  const bar = $('stats-bar');
+  if (!parsed.length) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+
+  const clean = parsed.filter(p => p.status === 'clean');
+  const flagged = parsed.filter(p => p.status === 'flagged');
+  const totalHours = clean.reduce((s, r) => s + r.hours, 0);
+  const workers = new Set(clean.map(r => r.worker)).size;
+  const projects = new Set(clean.map(r => r.jobSite)).size;
+
+  $('sb-entries').textContent = parsed.length;
+  $('sb-hours').textContent = totalHours;
+  $('sb-workers').textContent = workers;
+  $('sb-projects').textContent = projects;
+
+  const flagCard = $('sb-flagged-card');
+  if (flagged.length) {
+    flagCard.style.display = '';
+    $('sb-flagged').textContent = flagged.length;
+  } else {
+    flagCard.style.display = 'none';
+  }
+
+  updateTabBadges();
 }
 
 // ================================================================
@@ -137,7 +183,7 @@ function renderMessages() {
 }
 
 // ================================================================
-//  AI SYSTEM PROMPT — AI now handles region detection too
+//  AI SYSTEM PROMPT
 // ================================================================
 const PARSE_SYSTEM_PROMPT = `You are a text message parser for a traffic loop and electrical construction company in California. Foremen and workers text in hours in casual, messy language. Your job is to extract structured data from each message.
 
@@ -203,16 +249,13 @@ async function processMessages() {
   }
 }
 
-// ================================================================
-//  CALL GROQ
-// ================================================================
 async function callGroq(useJsonMode) {
   const batch = messages.map(m => `[ID:${m.id}] From: ${m.sender} — "${m.text}"`).join('\n');
 
   const body = {
     model: GROQ_MODEL,
     messages: [
-      { role: 'system', content: PARSE_SYSTEM_PROMPT + (useJsonMode ? '' : '\n\nIMPORTANT: Respond with ONLY valid JSON. No extra text.') },
+      { role: 'system', content: PARSE_SYSTEM_PROMPT + (useJsonMode ? '' : '\n\nRespond with ONLY valid JSON. No extra text.') },
       { role: 'user', content: `Parse these ${messages.length} text messages. One message can have MULTIPLE workers — return a separate entry for each.\n\n${batch}` }
     ],
     max_tokens: 2500,
@@ -229,7 +272,6 @@ async function callGroq(useJsonMode) {
     body: JSON.stringify(body)
   });
   clearTimeout(timeout);
-
   if (!res.ok) throw new Error(`API error: ${res.status}`);
 
   const data = await res.json();
@@ -245,130 +287,105 @@ async function callGroq(useJsonMode) {
     if (!match) throw new Error('No JSON array found');
     entries = JSON.parse(match[0]);
   }
-
   return entries;
 }
 
-// ================================================================
-//  BUILD RESULTS — map AI entries to parsed rows
-// ================================================================
 function buildResults(aiEntries) {
   const results = [];
-
-  aiEntries.forEach((ai, idx) => {
+  aiEntries.forEach(ai => {
     const msg = messages.find(m => m.id === ai.msgId);
     const rawText = msg ? msg.text : '';
     const sender = msg ? msg.sender : 'Unknown';
 
     if (!ai || ai.confidence === 'none' || !ai.hours) {
       results.push({
-        idx,
-        msgId: ai.msgId,
-        worker: ai?.worker || sender,
-        date: '',
-        hours: 0,
-        jobSite: '',
-        region: 'unknown',
-        raw: rawText,
-        status: 'flagged',
-        confidence: 'none',
+        idx: nextIdx++, msgId: ai.msgId, worker: ai?.worker || sender,
+        date: '', hours: 0, jobSite: '', region: 'unknown', raw: rawText,
+        status: 'flagged', confidence: 'none',
         flagReason: 'Couldn\'t extract hours — needs manual entry',
       });
     } else {
       const jobSite = ai.jobSite || 'Not specified';
-      // Check if aunt has overridden the region for this city
       let region = ai.region || 'unknown';
       const cityKey = extractCity(jobSite);
-      if (cityKey && regionOverrides[cityKey]) {
-        region = regionOverrides[cityKey];
-      }
+      if (cityKey && regionOverrides[cityKey]) region = regionOverrides[cityKey];
       const isFlagged = ai.confidence === 'low';
 
       results.push({
-        idx,
-        msgId: ai.msgId,
-        worker: ai.worker || sender,
-        date: ai.date || localDateStr(),
-        hours: parseFloat(ai.hours) || 0,
-        jobSite,
-        region,
-        raw: rawText,
-        status: isFlagged ? 'flagged' : 'clean',
-        confidence: ai.confidence,
+        idx: nextIdx++, msgId: ai.msgId, worker: ai.worker || sender,
+        date: ai.date || localDateStr(), hours: parseFloat(ai.hours) || 0,
+        jobSite, region, raw: rawText,
+        status: isFlagged ? 'flagged' : 'clean', confidence: ai.confidence,
         flagReason: isFlagged ? 'Low confidence — please verify' : undefined,
       });
     }
   });
-
   return results;
 }
 
+function finishProcessing() {
+  saveState();
+  renderMessages();
+  renderParsed();
+  updateStatsBar();
+  const clean = parsed.filter(p => p.status === 'clean').length;
+  const flagged = parsed.filter(p => p.status === 'flagged').length;
+  showToast(`${parsed.length} entries from ${messages.length} texts — ${clean} clean, ${flagged} need review`);
+}
+
 // ================================================================
-//  EXTRACT CITY from job site string (first word or known pattern)
+//  EXTRACT CITY
 // ================================================================
 function extractCity(jobSite) {
   if (!jobSite) return '';
-  // Try to grab the city — usually the first word(s) before the job description
   const lower = jobSite.toLowerCase().trim();
-  // Check for two-word cities first
   const twoWord = lower.match(/^(san diego|san francisco|san jose|santa ana|los angeles|long beach|chula vista|el cajon)/);
   if (twoWord) return twoWord[1];
-  // Single word city
   const oneWord = lower.match(/^([a-z]+)/);
   return oneWord ? oneWord[1] : '';
 }
 
 // ================================================================
-//  CHANGE REGION — called when aunt clicks a region tag
+//  CHANGE REGION
 // ================================================================
 function changeRegion(idx, currentRegion) {
   const regions = ['norcal', 'socal', 'sandiego'];
   const labels = { norcal: 'NorCal', socal: 'SoCal', sandiego: 'San Diego' };
-  const nextIdx = (regions.indexOf(currentRegion) + 1) % regions.length;
-  const newRegion = regions[nextIdx];
+  const newRegion = regions[(regions.indexOf(currentRegion) + 1) % regions.length];
 
   const row = parsed.find(p => p.idx === idx);
   if (!row) return;
 
-  // Save the override so this city is always correct next time
   const cityKey = extractCity(row.jobSite);
   if (cityKey) {
     regionOverrides[cityKey] = newRegion;
+    parsed.forEach(p => {
+      if (extractCity(p.jobSite) === cityKey) p.region = newRegion;
+    });
+  } else {
+    row.region = newRegion;
   }
 
-  // Update ALL rows with the same city
-  parsed.forEach(p => {
-    const pCity = extractCity(p.jobSite);
-    if (pCity && pCity === cityKey) {
-      p.region = newRegion;
-    }
-  });
-
   saveState();
-  renderParsed();
-  showToast(`${cityKey ? cityKey.charAt(0).toUpperCase() + cityKey.slice(1) : 'Entry'} → ${labels[newRegion]}. Saved for next time.`);
+  renderAll();
+  showToast(`${cityKey ? cityKey.charAt(0).toUpperCase() + cityKey.slice(1) : 'Entry'} → ${labels[newRegion]}`);
 }
 
 // ================================================================
-//  APPROVE FLAGGED ROW — aunt reviewed it and it's good
+//  APPROVE / EDIT / DELETE
 // ================================================================
 function approveRow(idx) {
   const row = parsed.find(p => p.idx === idx);
   if (!row) return;
   row.status = 'clean';
   row.flagReason = undefined;
-  saveState();
-  renderParsed();
+  saveState(); renderAll();
   showToast(`${row.worker} approved`);
 }
 
-// ================================================================
-//  EDIT FLAGGED ROW — inline edit then approve
-// ================================================================
 function saveEdit(idx) {
   const row = parsed.find(p => p.idx === idx);
   if (!row) return;
-
   const card = document.querySelector(`[data-idx="${idx}"]`);
   if (!card) return;
 
@@ -377,32 +394,110 @@ function saveEdit(idx) {
   row.hours = parseFloat(card.querySelector('.edit-hours').value) || row.hours;
   row.jobSite = card.querySelector('.edit-site').value || row.jobSite;
 
-  // Re-detect region from updated job site (or use override)
   const cityKey = extractCity(row.jobSite);
-  if (cityKey && regionOverrides[cityKey]) {
-    row.region = regionOverrides[cityKey];
-  }
+  if (cityKey && regionOverrides[cityKey]) row.region = regionOverrides[cityKey];
 
   row.status = 'clean';
   row.flagReason = undefined;
-  saveState();
-  renderParsed();
+  saveState(); renderAll();
   showToast(`${row.worker} updated and approved`);
 }
 
+function deleteRow(idx) {
+  const row = parsed.find(p => p.idx === idx);
+  if (!row) return;
+  const name = row.worker;
+  parsed = parsed.filter(p => p.idx !== idx);
+  saveState(); renderAll();
+  showToast(`${name} removed`);
+}
+
 // ================================================================
-//  FINISH PROCESSING
+//  INLINE CELL EDITING
 // ================================================================
-function finishProcessing() {
-  saveState();
-  renderMessages();
-  setTimeout(() => {
-    renderParsed();
-    const clean = parsed.filter(p => p.status === 'clean').length;
-    const flagged = parsed.filter(p => p.status === 'flagged').length;
-    const total = parsed.length;
-    showToast(`${total} entries from ${messages.length} texts — ${clean} clean, ${flagged} need review`);
-  }, 400);
+function editCell(el, idx, field) {
+  if (el.querySelector('input')) return;
+  const row = parsed.find(p => p.idx === idx);
+  if (!row) return;
+
+  const oldValue = row[field] || '';
+  const inputType = field === 'date' ? 'date' : field === 'hours' ? 'number' : 'text';
+
+  const input = document.createElement('input');
+  input.type = inputType;
+  input.className = 'inline-edit';
+  input.value = oldValue;
+  if (field === 'hours') input.step = '0.5';
+
+  el.textContent = '';
+  el.appendChild(input);
+  input.focus();
+  input.select();
+
+  function save() {
+    let val = input.value.trim();
+    if (field === 'hours') val = parseFloat(val) || oldValue;
+    row[field] = val;
+    if (field === 'jobSite') {
+      const ck = extractCity(val);
+      if (ck && regionOverrides[ck]) row.region = regionOverrides[ck];
+    }
+    saveState(); renderAll();
+  }
+
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { el.textContent = oldValue; }
+  });
+}
+
+// ================================================================
+//  MANUAL ENTRY
+// ================================================================
+function openManualEntry() {
+  $('manual-date').value = localDateStr();
+  $('manual-worker').value = '';
+  $('manual-hours').value = '';
+  $('manual-site').value = '';
+  $('modal-add').style.display = 'flex';
+  $('manual-worker').focus();
+}
+
+function closeModal() {
+  $('modal-add').style.display = 'none';
+}
+
+function submitManualEntry() {
+  const worker = $('manual-worker').value.trim();
+  const date = $('manual-date').value;
+  const hours = parseFloat($('manual-hours').value);
+  const jobSite = $('manual-site').value.trim();
+  const region = $('manual-region').value;
+
+  if (!worker || !hours) { showToast('Need at least a name and hours'); return; }
+
+  parsed.push({
+    idx: nextIdx++, msgId: null, worker, date: date || localDateStr(),
+    hours, jobSite: jobSite || 'Not specified', region,
+    raw: '(manual entry)', status: 'clean', confidence: 'manual',
+  });
+
+  saveState(); renderAll(); closeModal();
+  showToast(`${worker} — ${hours}hrs added`);
+}
+
+// ================================================================
+//  RENDER ALL — convenience to refresh everything
+// ================================================================
+function renderAll() {
+  renderParsed();
+  updateStatsBar();
+  // Only re-render active tab's heavy content
+  const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+  if (activeTab === 'hours') renderHoursSheet($('search-hours')?.value || '');
+  if (activeTab === 'summary') renderSummary();
+  if (activeTab === 'regions') renderRegionCards();
 }
 
 // ================================================================
@@ -416,9 +511,8 @@ function renderParsed() {
   $('stat-flagged').textContent = flagged.length + ' flagged';
   $('empty-state').style.display = parsed.length ? 'none' : 'block';
 
-  // Clean table — every cell is editable
-  const cleanSection = $('clean-section');
-  cleanSection.style.display = clean.length ? 'block' : 'none';
+  // Clean table
+  $('clean-section').style.display = clean.length ? 'block' : 'none';
   const tbody = $('clean-tbody');
   tbody.innerHTML = '';
   clean.forEach(row => {
@@ -428,14 +522,14 @@ function renderParsed() {
       <td><span class="editable" onclick="editCell(this,${row.idx},'date')">${row.date}</span></td>
       <td><span class="editable" onclick="editCell(this,${row.idx},'hours')">${row.hours}</span></td>
       <td><span class="editable" onclick="editCell(this,${row.idx},'jobSite')">${escapeHtml(row.jobSite)}</span></td>
-      <td><span class="region-tag ${row.region} clickable" onclick="changeRegion(${row.idx},'${row.region}')" title="Click to change region">${regionLabel(row.region)}</span></td>
+      <td><span class="region-tag ${row.region} clickable" onclick="changeRegion(${row.idx},'${row.region}')">${regionLabel(row.region)}</span></td>
+      <td><button class="btn-delete" onclick="deleteRow(${row.idx})">✕</button></td>
     `;
     tbody.appendChild(tr);
   });
 
-  // Flagged list
-  const flaggedSection = $('flagged-section');
-  flaggedSection.style.display = flagged.length ? 'block' : 'none';
+  // Flagged
+  $('flagged-section').style.display = flagged.length ? 'block' : 'none';
   const flagList = $('flagged-list');
   flagList.innerHTML = '';
   flagged.forEach(row => {
@@ -452,6 +546,7 @@ function renderParsed() {
         <input class="edit-input edit-site" value="${escapeHtml(row.jobSite)}" placeholder="Job site / city">
         <button class="btn-approve" onclick="saveEdit(${row.idx})">Save & Approve</button>
         ${row.hours ? `<button class="btn-approve-small" onclick="approveRow(${row.idx})">Approve As-Is</button>` : ''}
+        <button class="btn-delete" onclick="deleteRow(${row.idx})">✕</button>
       </div>
     `;
     flagList.appendChild(card);
@@ -465,20 +560,12 @@ function renderHoursSheet(filter = '') {
   const tbody = $('hours-tbody');
   const empty = $('hours-empty');
 
-  if (!parsed.length) {
-    tbody.innerHTML = '';
-    empty.style.display = 'block';
-    return;
-  }
+  if (!parsed.length) { tbody.innerHTML = ''; empty.style.display = 'block'; return; }
   empty.style.display = 'none';
 
-  const lower = filter.toLowerCase();
+  const lower = (filter || '').toLowerCase();
   const filtered = lower
-    ? parsed.filter(r =>
-        r.worker.toLowerCase().includes(lower) ||
-        r.jobSite.toLowerCase().includes(lower) ||
-        r.region.includes(lower) ||
-        r.raw.toLowerCase().includes(lower))
+    ? parsed.filter(r => r.worker.toLowerCase().includes(lower) || r.jobSite.toLowerCase().includes(lower) || r.region.includes(lower) || r.raw.toLowerCase().includes(lower))
     : parsed;
 
   tbody.innerHTML = '';
@@ -489,27 +576,101 @@ function renderHoursSheet(filter = '') {
       <td><span class="editable" onclick="editCell(this,${row.idx},'date')">${row.date || '—'}</span></td>
       <td><span class="editable" onclick="editCell(this,${row.idx},'hours')">${row.hours || '—'}</span></td>
       <td><span class="editable" onclick="editCell(this,${row.idx},'jobSite')">${escapeHtml(row.jobSite) || '—'}</span></td>
-      <td><span class="region-tag ${row.region} clickable" onclick="changeRegion(${row.idx},'${row.region}')" title="Click to change region">${regionLabel(row.region)}</span></td>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8892a8;font-size:12px;">${escapeHtml(row.raw)}</td>
-      <td><span class="status-tag ${row.status}">${row.status === 'clean' ? '✅ Clean' : '⚠️ Review'}</span></td>
+      <td><span class="region-tag ${row.region} clickable" onclick="changeRegion(${row.idx},'${row.region}')">${regionLabel(row.region)}</span></td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8892a8;font-size:12px;">${escapeHtml(row.raw)}</td>
+      <td><span class="status-tag ${row.status}">${row.status === 'clean' ? '✅' : '⚠️'}</span></td>
+      <td><button class="btn-delete" onclick="deleteRow(${row.idx})">✕</button></td>
     `;
     tbody.appendChild(tr);
   });
 }
 
 // ================================================================
-//  RENDER: REGION CARDS (TAB 3)
+//  RENDER: SUMMARY (TAB 3)
 // ================================================================
-function renderRegionCards() {
-  const container = $('region-cards');
-  const empty = $('regions-empty');
-  const clean = parsed.filter(p => p.status === 'clean');
+function renderSummary() {
+  const period = $('summary-period').value;
+  const view = $('summary-view').value;
+  const clean = filterByPeriod(parsed.filter(p => p.status === 'clean'), period);
+  const totalsDiv = $('summary-totals');
+  const tableWrap = $('summary-table-wrap');
+  const empty = $('summary-empty');
 
   if (!clean.length) {
-    container.innerHTML = '';
+    totalsDiv.innerHTML = '';
+    tableWrap.style.display = 'none';
     empty.style.display = 'block';
     return;
   }
+  empty.style.display = 'none';
+  tableWrap.style.display = '';
+
+  const totalHours = clean.reduce((s, r) => s + r.hours, 0);
+  const uniqueWorkers = new Set(clean.map(r => r.worker)).size;
+  const uniqueSites = new Set(clean.map(r => r.jobSite)).size;
+
+  totalsDiv.innerHTML = `
+    <div class="summary-total-card"><span class="stc-num">${totalHours}</span><span class="stc-label">Total Hours</span></div>
+    <div class="summary-total-card"><span class="stc-num">${clean.length}</span><span class="stc-label">Entries</span></div>
+    <div class="summary-total-card"><span class="stc-num">${uniqueWorkers}</span><span class="stc-label">Workers</span></div>
+    <div class="summary-total-card"><span class="stc-num">${uniqueSites}</span><span class="stc-label">Job Sites</span></div>
+  `;
+
+  const thead = $('summary-thead');
+  const tbody = $('summary-tbody');
+
+  if (view === 'worker') {
+    thead.innerHTML = '<tr><th>Worker</th><th>Entries</th><th>Total Hours</th><th>Avg Hours/Day</th><th>Job Sites</th><th>Regions</th></tr>';
+    const grouped = groupBy(clean, 'worker');
+    const rows = Object.entries(grouped).sort((a, b) => sum(b[1]) - sum(a[1]));
+    tbody.innerHTML = '';
+    rows.forEach(([worker, entries]) => {
+      const total = sum(entries);
+      const sites = [...new Set(entries.map(e => e.jobSite))];
+      const regions = [...new Set(entries.map(e => e.region))];
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(worker)}</strong></td>
+        <td>${entries.length}</td>
+        <td><strong>${total}</strong></td>
+        <td>${(total / entries.length).toFixed(1)}</td>
+        <td style="font-size:12px;color:#8892a8;">${sites.map(s => escapeHtml(s)).join(', ')}</td>
+        <td>${regions.map(r => `<span class="region-tag ${r}" style="font-size:10px;">${regionLabel(r)}</span>`).join(' ')}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } else {
+    thead.innerHTML = '<tr><th>Job Site</th><th>Entries</th><th>Total Hours</th><th>Workers</th><th>Region</th></tr>';
+    const grouped = groupBy(clean, 'jobSite');
+    const rows = Object.entries(grouped).sort((a, b) => sum(b[1]) - sum(a[1]));
+    tbody.innerHTML = '';
+    rows.forEach(([site, entries]) => {
+      const total = sum(entries);
+      const workers = [...new Set(entries.map(e => e.worker))];
+      const region = entries[0]?.region || 'unknown';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(site)}</strong></td>
+        <td>${entries.length}</td>
+        <td><strong>${total}</strong></td>
+        <td style="font-size:12px;color:#8892a8;">${workers.map(w => escapeHtml(w)).join(', ')}</td>
+        <td><span class="region-tag ${region}">${regionLabel(region)}</span></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+}
+
+// ================================================================
+//  RENDER: REGION CARDS (TAB 4)
+// ================================================================
+function renderRegionCards() {
+  const period = $('region-period').value;
+  const container = $('region-cards');
+  const empty = $('regions-empty');
+  const clean = filterByPeriod(parsed.filter(p => p.status === 'clean'), period);
+
+  if (!clean.length) { container.innerHTML = ''; empty.style.display = 'block'; return; }
   empty.style.display = 'none';
 
   const regions = [
@@ -521,7 +682,8 @@ function renderRegionCards() {
   container.innerHTML = '';
   regions.forEach(region => {
     const rows = clean.filter(r => r.region === region.key);
-    const totalHours = rows.reduce((sum, r) => sum + r.hours, 0);
+    const totalHours = rows.reduce((s, r) => s + r.hours, 0);
+    const workers = [...new Set(rows.map(r => r.worker))];
 
     const card = document.createElement('div');
     card.className = 'region-card';
@@ -529,7 +691,7 @@ function renderRegionCards() {
       <div class="region-card-header ${region.color}">
         <div>
           <h3>${region.label}</h3>
-          <span style="font-size:12px;color:#8892a8;">${rows.length} entr${rows.length !== 1 ? 'ies' : 'y'}</span>
+          <span style="font-size:12px;color:#8892a8;">${workers.length} worker${workers.length !== 1 ? 's' : ''} · ${rows.length} entr${rows.length !== 1 ? 'ies' : 'y'}</span>
         </div>
         <div style="text-align:right;">
           <div class="hours-total">${totalHours}</div>
@@ -547,7 +709,7 @@ function renderRegionCards() {
                   <td>${r.date}</td>
                   <td>${r.hours}</td>
                   <td>${escapeHtml(r.jobSite)}</td>
-                  <td><span class="region-tag ${r.region} clickable" onclick="changeRegion(${r.idx},'${r.region}')" title="Click to change region">✎</span></td>
+                  <td><span class="region-tag ${r.region} clickable" onclick="changeRegion(${r.idx},'${r.region}')" title="Click to move region">✎</span></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -557,6 +719,26 @@ function renderRegionCards() {
     `;
     container.appendChild(card);
   });
+}
+
+// ================================================================
+//  PERIOD FILTER
+// ================================================================
+function filterByPeriod(rows, period) {
+  if (period === 'all') return rows;
+  const now = new Date();
+  if (period === 'week') {
+    const day = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+    const start = localDateStr(monday);
+    return rows.filter(r => r.date >= start);
+  }
+  if (period === 'month') {
+    const start = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-01';
+    return rows.filter(r => r.date >= start);
+  }
+  return rows;
 }
 
 // ================================================================
@@ -578,12 +760,8 @@ function exportCSV() {
 }
 
 function exportRegions() {
-  if (!parsed.filter(p => p.status === 'clean').length) {
-    showToast('No clean hours to export');
-    return;
-  }
+  if (!parsed.filter(p => p.status === 'clean').length) { showToast('No clean hours to export'); return; }
   exportCSV();
-  showToast('Region report exported as CSV');
 }
 
 // ================================================================
@@ -594,68 +772,28 @@ function resetDemo() {
   storageRemove('tlc_parsed');
   messages = [...DEMO_MESSAGES];
   parsed = [];
+  nextIdx = 0;
   storageSet('tlc_messages', messages);
   renderMessages();
-  renderParsed();
+  renderAll();
   showToast('Demo reset — region corrections kept');
-}
-
-// ================================================================
-//  INLINE CELL EDITING — click any cell to edit it
-// ================================================================
-function editCell(el, idx, field) {
-  // Don't stack inputs if already editing
-  if (el.querySelector('input')) return;
-
-  const row = parsed.find(p => p.idx === idx);
-  if (!row) return;
-
-  const oldValue = row[field] || '';
-  const inputType = field === 'date' ? 'date' : field === 'hours' ? 'number' : 'text';
-
-  const input = document.createElement('input');
-  input.type = inputType;
-  input.className = 'inline-edit';
-  input.value = oldValue;
-  if (field === 'hours') input.step = '0.5';
-
-  el.textContent = '';
-  el.appendChild(input);
-  input.focus();
-  input.select();
-
-  function save() {
-    let newValue = input.value.trim();
-    if (field === 'hours') newValue = parseFloat(newValue) || oldValue;
-
-    row[field] = newValue;
-
-    // If they changed the job site, re-check region
-    if (field === 'jobSite') {
-      const cityKey = extractCity(newValue);
-      if (cityKey && regionOverrides[cityKey]) {
-        row.region = regionOverrides[cityKey];
-      }
-    }
-
-    saveState();
-    // Re-render whichever tab is active
-    renderParsed();
-    renderHoursSheet($('search-hours')?.value || '');
-    showToast(`Updated ${row.worker}'s ${field === 'jobSite' ? 'job site' : field}`);
-  }
-
-  input.addEventListener('blur', save);
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    if (e.key === 'Escape') { el.textContent = oldValue; }
-  });
 }
 
 // ================================================================
 //  HELPERS
 // ================================================================
 function regionLabel(key) {
-  const labels = { norcal: 'NorCal', socal: 'SoCal', sandiego: 'San Diego', unknown: 'Unknown' };
-  return labels[key] || key;
+  return { norcal: 'NorCal', socal: 'SoCal', sandiego: 'San Diego', unknown: 'Unknown' }[key] || key;
+}
+
+function groupBy(arr, key) {
+  return arr.reduce((acc, item) => {
+    const k = item[key] || 'Unknown';
+    (acc[k] = acc[k] || []).push(item);
+    return acc;
+  }, {});
+}
+
+function sum(entries) {
+  return entries.reduce((s, e) => s + e.hours, 0);
 }

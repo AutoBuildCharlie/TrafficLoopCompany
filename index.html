@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Traffic Loop Company — Hours Manager</title>
+  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ─── TOP BAR ─────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="logo-icon">⚡</span>
+      <h1>Traffic Loop Co.</h1>
+      <span class="badge">Hours Manager</span>
+    </div>
+    <div class="topbar-right">
+      <button class="tab-btn active" data-tab="intake">Incoming Texts</button>
+      <button class="tab-btn" data-tab="hours">Hours Sheet</button>
+      <button class="tab-btn" data-tab="regions">By Region</button>
+    </div>
+  </header>
+
+  <!-- ─── TAB 1: INCOMING TEXTS ──────────────────────── -->
+  <main id="tab-intake" class="tab-content active">
+    <div class="intake-layout">
+
+      <!-- Left: Phone mockup with texts -->
+      <div class="phone-panel">
+        <div class="phone-header">
+          <span class="phone-label">📱 Incoming Worker Texts</span>
+          <span class="msg-count" id="msg-count">0 messages</span>
+        </div>
+        <div class="phone-messages" id="phone-messages"></div>
+        <div class="phone-actions">
+          <button class="btn-primary" id="btn-process">Process Messages</button>
+          <button class="btn-ghost" id="btn-reset-texts">Reset Demo</button>
+        </div>
+      </div>
+
+      <!-- Right: Parsed results -->
+      <div class="results-panel">
+        <div class="results-header">
+          <h2>Parsed Results</h2>
+          <div class="result-stats">
+            <span class="stat-pill good" id="stat-clean">0 clean</span>
+            <span class="stat-pill warn" id="stat-flagged">0 flagged</span>
+          </div>
+        </div>
+
+        <!-- Clean rows -->
+        <div class="results-section" id="clean-section" style="display:none">
+          <h3>✅ Ready for Sheet</h3>
+          <div class="table-wrap">
+            <table id="clean-table">
+              <thead>
+                <tr>
+                  <th>Worker</th>
+                  <th>Date</th>
+                  <th>Hours</th>
+                  <th>Job Site</th>
+                  <th>Region</th>
+                </tr>
+              </thead>
+              <tbody id="clean-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Flagged rows -->
+        <div class="results-section flagged-section" id="flagged-section" style="display:none">
+          <h3>⚠️ Needs Review</h3>
+          <div id="flagged-list"></div>
+        </div>
+
+        <!-- Empty state -->
+        <div class="empty-state" id="empty-state">
+          <p>Hit <strong>"Process Messages"</strong> to parse worker texts into clean rows</p>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ─── TAB 2: FULL HOURS SHEET ────────────────────── -->
+  <main id="tab-hours" class="tab-content">
+    <div class="sheet-header">
+      <h2>📋 Hours Sheet — All Workers</h2>
+      <div class="sheet-actions">
+        <input type="text" id="search-hours" placeholder="Search by name, site, region..." class="search-input">
+        <button class="btn-primary" id="btn-export-csv">Export CSV</button>
+      </div>
+    </div>
+    <div class="table-wrap full-table">
+      <table id="hours-table">
+        <thead>
+          <tr>
+            <th>Worker</th>
+            <th>Date</th>
+            <th>Hours</th>
+            <th>Job Site</th>
+            <th>Region</th>
+            <th>Raw Message</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="hours-tbody"></tbody>
+      </table>
+    </div>
+    <div class="empty-state" id="hours-empty">
+      <p>No hours processed yet. Go to <strong>Incoming Texts</strong> and process some messages first.</p>
+    </div>
+  </main>
+
+  <!-- ─── TAB 3: BY REGION ───────────────────────────── -->
+  <main id="tab-regions" class="tab-content">
+    <div class="sheet-header">
+      <h2>🗺️ Hours by Region — Monthly Report View</h2>
+      <div class="sheet-actions">
+        <select id="region-month" class="search-input">
+          <option value="2026-03">March 2026</option>
+          <option value="2026-02">February 2026</option>
+          <option value="2026-01">January 2026</option>
+        </select>
+        <button class="btn-primary" id="btn-export-regions">Export All Regions</button>
+      </div>
+    </div>
+
+    <div class="region-cards" id="region-cards">
+      <!-- Filled by JS -->
+    </div>
+
+    <div class="empty-state" id="regions-empty">
+      <p>No hours to sort yet. Process worker texts first.</p>
+    </div>
+  </main>
+
+  <script src="utils.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>

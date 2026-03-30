@@ -126,14 +126,16 @@ function loadState() {
   parsed = storageGet('tlc_parsed', null);
   regionOverrides = storageGet('tlc_region_overrides', {});
 
-  if (!messages) {
+  // Type validation — protect against corrupted localStorage
+  if (!Array.isArray(messages)) {
     messages = [...DEMO_MESSAGES];
     storageSet('tlc_messages', messages);
   }
-  if (!parsed) parsed = [];
+  if (!Array.isArray(parsed)) parsed = [];
+  if (typeof regionOverrides !== 'object' || Array.isArray(regionOverrides)) regionOverrides = {};
 
   // Set nextIdx higher than any existing
-  nextIdx = parsed.length ? Math.max(...parsed.map(p => p.idx)) + 1 : 0;
+  nextIdx = parsed.length ? Math.max(...parsed.map(p => p.idx ?? 0)) + 1 : 0;
 }
 
 function saveState() {
@@ -253,14 +255,18 @@ async function processMessages() {
     finishProcessing();
   } catch (err) {
     console.error('Process error:', err);
-    showToast('Retrying...');
-    try {
-      const aiEntries = await callGroq(false);
-      parsed = buildResults(aiEntries);
-      finishProcessing();
-    } catch (e2) {
-      console.error('Fallback error:', e2);
-      showToast('Could not reach AI — check connection');
+    if (err.message.includes('offline')) {
+      showToast(err.message);
+    } else {
+      showToast('Retrying...');
+      try {
+        const aiEntries = await callGroq(false);
+        parsed = buildResults(aiEntries);
+        finishProcessing();
+      } catch (e2) {
+        console.error('Fallback error:', e2);
+        showToast(e2.message.includes('offline') ? e2.message : 'Could not reach AI — check connection');
+      }
     }
   } finally {
     btn.textContent = 'Process Messages';
@@ -270,6 +276,8 @@ async function processMessages() {
 }
 
 async function callGroq(useJsonMode) {
+  if (!navigator.onLine) throw new Error('You\'re offline — connect to the internet and try again');
+
   const batch = messages.map(m => `[ID:${m.id}] From: ${m.sender} — "${m.text}"`).join('\n');
 
   const body = {
@@ -294,8 +302,10 @@ async function callGroq(useJsonMode) {
   clearTimeout(timeout);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
 
-  const data = await res.json();
+  let data;
+  try { data = await res.json(); } catch (e) { throw new Error('API returned invalid response'); }
   const raw = data.choices?.[0]?.message?.content || '';
+  if (!raw) throw new Error('AI returned empty response');
 
   let entries;
   try {
@@ -303,9 +313,9 @@ async function callGroq(useJsonMode) {
     entries = Array.isArray(j) ? j : (j.entries || j.results || j.data || Object.values(j)[0]);
     if (!Array.isArray(entries)) throw new Error('Not an array');
   } catch (e) {
-    const match = raw.match(/\[[\s\S]*\]/);
-    if (!match) throw new Error('No JSON array found');
-    entries = JSON.parse(match[0]);
+    const match = raw.match(/\[[\s\S]*?\]/);
+    if (!match) throw new Error('No JSON array found in response');
+    try { entries = JSON.parse(match[0]); } catch (e2) { throw new Error('AI response contained malformed JSON'); }
   }
   return entries;
 }
@@ -317,7 +327,7 @@ function buildResults(aiEntries) {
     const rawText = msg ? msg.text : '';
     const sender = msg ? msg.sender : 'Unknown';
 
-    if (!ai || ai.confidence === 'none' || !ai.hours) {
+    if (!ai || ai.confidence === 'none' || (ai.hours === undefined || ai.hours === null || ai.hours === '')) {
       results.push({
         idx: nextIdx++, msgId: ai.msgId, worker: ai?.worker || sender,
         date: '', hours: 0, jobSite: '', region: 'unknown', raw: rawText,
@@ -359,8 +369,10 @@ function finishProcessing() {
 function extractCity(jobSite) {
   if (!jobSite) return '';
   const lower = jobSite.toLowerCase().trim();
-  const twoWord = lower.match(/^(san diego|san francisco|san jose|santa ana|los angeles|long beach|chula vista|el cajon)/);
+  // Two-word cities first
+  const twoWord = lower.match(/(san diego|san francisco|san jose|santa ana|los angeles|long beach|chula vista|el cajon|santa barbara|san bernardino)/);
   if (twoWord) return twoWord[1];
+  // Single-word city — first word only
   const oneWord = lower.match(/^([a-z]+)/);
   return oneWord ? oneWord[1] : '';
 }
@@ -468,7 +480,7 @@ function editCell(el, idx, field) {
   input.addEventListener('blur', save);
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    if (e.key === 'Escape') { el.textContent = oldValue; }
+    if (e.key === 'Escape') { input.removeEventListener('blur', save); el.textContent = oldValue; }
   });
 }
 
@@ -495,7 +507,9 @@ function submitManualEntry() {
   const jobSite = $('manual-site').value.trim();
   const region = $('manual-region').value;
 
-  if (!worker || !hours) { showToast('Need at least a name and hours'); return; }
+  if (!worker) { showToast('Need a worker name'); return; }
+  if (isNaN(hours) || hours <= 0) { showToast('Enter valid hours (greater than 0)'); return; }
+  if (hours > 24) { showToast('Hours can\'t be more than 24'); return; }
 
   parsed.push({
     idx: nextIdx++, msgId: null, worker, date: date || localDateStr(),
@@ -790,13 +804,15 @@ function exportRegions() {
 function resetDemo() {
   storageRemove('tlc_messages');
   storageRemove('tlc_parsed');
+  storageRemove('tlc_region_overrides');
   messages = [...DEMO_MESSAGES];
   parsed = [];
+  regionOverrides = {};
   nextIdx = 0;
   storageSet('tlc_messages', messages);
   renderMessages();
   renderAll();
-  showToast('Demo reset — region corrections kept');
+  showToast('Demo reset');
 }
 
 // ================================================================

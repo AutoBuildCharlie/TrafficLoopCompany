@@ -34,7 +34,7 @@ function safeParse(raw, fallback) {
 function storageGet(key, fallback = null) {
   const raw = localStorage.getItem(key);
   if (raw === null) return fallback;
-  return safeParse(raw, raw); // returns parsed JSON or raw string
+  return safeParse(raw, fallback); // if JSON is corrupted, return fallback not raw string
 }
 
 function storageSet(key, value) {

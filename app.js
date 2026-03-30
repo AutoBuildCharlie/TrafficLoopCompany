@@ -416,7 +416,7 @@ function renderParsed() {
   $('stat-flagged').textContent = flagged.length + ' flagged';
   $('empty-state').style.display = parsed.length ? 'none' : 'block';
 
-  // Clean table
+  // Clean table — every cell is editable
   const cleanSection = $('clean-section');
   cleanSection.style.display = clean.length ? 'block' : 'none';
   const tbody = $('clean-tbody');
@@ -424,10 +424,10 @@ function renderParsed() {
   clean.forEach(row => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${escapeHtml(row.worker)}</strong></td>
-      <td>${row.date}</td>
-      <td>${row.hours}</td>
-      <td>${escapeHtml(row.jobSite)}</td>
+      <td><span class="editable" onclick="editCell(this,${row.idx},'worker')">${escapeHtml(row.worker)}</span></td>
+      <td><span class="editable" onclick="editCell(this,${row.idx},'date')">${row.date}</span></td>
+      <td><span class="editable" onclick="editCell(this,${row.idx},'hours')">${row.hours}</span></td>
+      <td><span class="editable" onclick="editCell(this,${row.idx},'jobSite')">${escapeHtml(row.jobSite)}</span></td>
       <td><span class="region-tag ${row.region} clickable" onclick="changeRegion(${row.idx},'${row.region}')" title="Click to change region">${regionLabel(row.region)}</span></td>
     `;
     tbody.appendChild(tr);
@@ -485,10 +485,10 @@ function renderHoursSheet(filter = '') {
   filtered.forEach(row => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${escapeHtml(row.worker)}</strong></td>
-      <td>${row.date || '—'}</td>
-      <td>${row.hours || '—'}</td>
-      <td>${escapeHtml(row.jobSite) || '—'}</td>
+      <td><span class="editable" onclick="editCell(this,${row.idx},'worker')">${escapeHtml(row.worker)}</span></td>
+      <td><span class="editable" onclick="editCell(this,${row.idx},'date')">${row.date || '—'}</span></td>
+      <td><span class="editable" onclick="editCell(this,${row.idx},'hours')">${row.hours || '—'}</span></td>
+      <td><span class="editable" onclick="editCell(this,${row.idx},'jobSite')">${escapeHtml(row.jobSite) || '—'}</span></td>
       <td><span class="region-tag ${row.region} clickable" onclick="changeRegion(${row.idx},'${row.region}')" title="Click to change region">${regionLabel(row.region)}</span></td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8892a8;font-size:12px;">${escapeHtml(row.raw)}</td>
       <td><span class="status-tag ${row.status}">${row.status === 'clean' ? '✅ Clean' : '⚠️ Review'}</span></td>
@@ -598,6 +598,58 @@ function resetDemo() {
   renderMessages();
   renderParsed();
   showToast('Demo reset — region corrections kept');
+}
+
+// ================================================================
+//  INLINE CELL EDITING — click any cell to edit it
+// ================================================================
+function editCell(el, idx, field) {
+  // Don't stack inputs if already editing
+  if (el.querySelector('input')) return;
+
+  const row = parsed.find(p => p.idx === idx);
+  if (!row) return;
+
+  const oldValue = row[field] || '';
+  const inputType = field === 'date' ? 'date' : field === 'hours' ? 'number' : 'text';
+
+  const input = document.createElement('input');
+  input.type = inputType;
+  input.className = 'inline-edit';
+  input.value = oldValue;
+  if (field === 'hours') input.step = '0.5';
+
+  el.textContent = '';
+  el.appendChild(input);
+  input.focus();
+  input.select();
+
+  function save() {
+    let newValue = input.value.trim();
+    if (field === 'hours') newValue = parseFloat(newValue) || oldValue;
+
+    row[field] = newValue;
+
+    // If they changed the job site, re-check region
+    if (field === 'jobSite') {
+      const cityKey = extractCity(newValue);
+      if (cityKey && regionOverrides[cityKey]) {
+        row.region = regionOverrides[cityKey];
+      }
+    }
+
+    saveState();
+    // Re-render whichever tab is active
+    renderParsed();
+    renderHoursSheet($('search-hours')?.value || '');
+    showToast(`Updated ${row.worker}'s ${field === 'jobSite' ? 'job site' : field}`);
+  }
+
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { el.textContent = oldValue; }
+  });
 }
 
 // ================================================================

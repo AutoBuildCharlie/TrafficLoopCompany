@@ -3,8 +3,9 @@
 // ================================================================
 // localStorage keys:
 //
-// tlc_messages    → [{ id, sender, text, time }]
-// tlc_parsed      → [{ msgId, worker, date, hours, jobSite, region, raw, status: "clean"|"flagged", confidence, flagReason? }]
+// tlc_messages        → [{ id, sender, text, time }]
+// tlc_parsed          → [{ msgId, worker, date, hours, jobSite, region, raw, status, confidence, flagReason? }]
+// tlc_region_overrides → { "torrance": "socal", "temecula": "socal" } — aunt's manual corrections
 //
 // External API: Groq via Cloudflare Worker proxy (fittrack-proxy.aestheticcal22.workers.dev)
 // Model: llama-3.3-70b-versatile
@@ -20,33 +21,24 @@ const GROQ_MODEL = 'llama-3.3-70b-versatile';
 //  DEMO DATA — realistic foreman crew texts + individual worker texts
 // ================================================================
 const DEMO_MESSAGES = [
-  // Foreman crew texts — multiple workers in one message
   { id: 1,  sender: 'Rick Salazar (Foreman)',  text: 'Anaheim loop install today — Luis 8, Jose 7.5, Mario 8, Mike 8.5',                     time: '3:45 PM' },
   { id: 2,  sender: 'Rick Salazar (Foreman)',  text: 'Santa Ana ped heads crew: Carlos 8hrs, Ray 9hrs, Paul 8hrs',                            time: '3:52 PM' },
   { id: 3,  sender: 'Dave Torres (Foreman)',   text: 'San Diego signal repair — David 10, Danny 9.5, Tony 7. Danny worked a half day friday too forgot to report that', time: '4:10 PM' },
   { id: 4,  sender: 'Dave Torres (Foreman)',   text: 'Oceanside ped heads monday — Tony 7hrs, Jesse 6hrs',                                    time: '4:15 PM' },
   { id: 5,  sender: 'Rick Salazar (Foreman)',  text: 'Sacramento loop replacement yesterday — Carlos 8, Ray 9, Paul 8',                       time: '4:30 PM' },
   { id: 6,  sender: 'Rick Salazar (Foreman)',  text: 'SF traffic signal upgrade — Ray did 9 hours today',                                     time: '4:45 PM' },
-
-  // Individual worker texts — messy, casual
   { id: 7,  sender: 'Mario Delgado',           text: 'hey forgot yesterday. worked all day at the bakersfield site',                           time: '6:10 PM' },
   { id: 8,  sender: 'Unknown Number',          text: '8 hours yesterday',                                                                      time: '7:01 PM' },
   { id: 9,  sender: 'Jesse Ruiz',              text: 'hey i also did 6 hrs on the LA freeway job tuesday call me',                             time: '7:40 PM' },
   { id: 10, sender: 'Mike Alvarez',            text: 'late entry — 8 and a half hours LA loop detection on wednesday',                         time: '8:15 PM' },
 ];
 
-// Region mapping by job site keywords
-const REGION_MAP = {
-  norcal: ['sacramento', 'sf', 'san francisco', 'oakland', 'fresno', 'bakersfield', 'stockton', 'san jose'],
-  socal: ['anaheim', 'santa ana', 'la', 'los angeles', 'irvine', 'long beach', 'pasadena', 'riverside', 'ontario', 'freeway'],
-  sandiego: ['san diego', 'oceanside', 'chula vista', 'escondido', 'carlsbad'],
-};
-
 // ================================================================
 //  STATE
 // ================================================================
 let messages = [];
 let parsed = [];
+let regionOverrides = {};
 let isProcessing = false;
 
 // ================================================================
@@ -97,6 +89,7 @@ function setupButtons() {
 function loadState() {
   messages = storageGet('tlc_messages', null);
   parsed = storageGet('tlc_parsed', null);
+  regionOverrides = storageGet('tlc_region_overrides', {});
 
   if (!messages) {
     messages = [...DEMO_MESSAGES];
@@ -110,6 +103,7 @@ function loadState() {
 function saveState() {
   storageSet('tlc_messages', messages);
   storageSet('tlc_parsed', parsed);
+  storageSet('tlc_region_overrides', regionOverrides);
 }
 
 // ================================================================
@@ -128,8 +122,7 @@ function renderMessages() {
     bubble.className = 'text-bubble ' + statusClass;
     if (parsedRows.length) bubble.classList.add('parsed');
 
-    // Show how many workers were extracted from this message
-    const countTag = parsedRows.length > 1 ? `<span class="extract-count">${parsedRows.length} workers extracted</span>` : '';
+    const countTag = parsedRows.length > 1 ? `<span class="extract-count">${parsedRows.length} entries extracted</span>` : '';
 
     bubble.innerHTML = `
       <div class="sender">${escapeHtml(msg.sender)}</div>
@@ -144,7 +137,7 @@ function renderMessages() {
 }
 
 // ================================================================
-//  AI SYSTEM PROMPT
+//  AI SYSTEM PROMPT — AI now handles region detection too
 // ================================================================
 const PARSE_SYSTEM_PROMPT = `You are a text message parser for a traffic loop and electrical construction company in California. Foremen and workers text in hours in casual, messy language. Your job is to extract structured data from each message.
 
@@ -159,14 +152,19 @@ For EACH worker entry, extract:
 - worker: the worker's full name if known, first name if that's all you have. Use sender name ONLY if the message is clearly about themselves (not a foreman reporting for others)
 - date: the work date in YYYY-MM-DD format. "today" = ${localDateStr()}. "yesterday" = yesterday's date. "monday", "friday" etc = most recent past occurrence. If unclear, use today.
 - hours: number of hours worked (decimal). "all day" = 8. "half day" = 4. "8 and a half" = 8.5.
-- jobSite: the job site or project name. Use the city + job description from the message.
-- confidence: "high" if all 4 fields are clear, "low" if you had to guess on any field
+- jobSite: the job site or project name. Include the city and job description from the message.
+- region: which California reporting region this job site is in. Use your knowledge of California geography:
+  - "norcal" = Northern California (Sacramento, SF, Oakland, Bakersfield, Fresno, Stockton, San Jose, Redding, etc.)
+  - "socal" = Southern California (LA, Anaheim, Santa Ana, Irvine, Long Beach, Riverside, Torrance, Pasadena, etc.)
+  - "sandiego" = San Diego area (San Diego, Oceanside, Chula Vista, Escondido, Carlsbad, El Cajon, etc.)
+  If the city is unclear or not mentioned, use "unknown".
+- confidence: "high" if all fields are clear, "low" if you had to guess on any field
 
 Respond with JSON: {"entries": [...]}
-Each entry: {"msgId":1,"worker":"...","date":"YYYY-MM-DD","hours":0,"jobSite":"...","confidence":"high|low"}
+Each entry: {"msgId":1,"worker":"...","date":"YYYY-MM-DD","hours":0,"jobSite":"...","region":"norcal|socal|sandiego|unknown","confidence":"high|low"}
 
 If a message is truly unparseable (no hours info at all), return:
-{"msgId":1,"worker":"...","date":"","hours":0,"jobSite":"","confidence":"none"}`;
+{"msgId":1,"worker":"...","date":"","hours":0,"jobSite":"","region":"unknown","confidence":"none"}`;
 
 // ================================================================
 //  PROCESS MESSAGES WITH AI
@@ -189,7 +187,7 @@ async function processMessages() {
     finishProcessing();
   } catch (err) {
     console.error('Process error:', err);
-    showToast('Retrying without JSON mode...');
+    showToast('Retrying...');
     try {
       const aiEntries = await callGroq(false);
       parsed = buildResults(aiEntries);
@@ -206,7 +204,7 @@ async function processMessages() {
 }
 
 // ================================================================
-//  CALL GROQ — send all messages in one batch
+//  CALL GROQ
 // ================================================================
 async function callGroq(useJsonMode) {
   const batch = messages.map(m => `[ID:${m.id}] From: ${m.sender} — "${m.text}"`).join('\n');
@@ -215,7 +213,7 @@ async function callGroq(useJsonMode) {
     model: GROQ_MODEL,
     messages: [
       { role: 'system', content: PARSE_SYSTEM_PROMPT + (useJsonMode ? '' : '\n\nIMPORTANT: Respond with ONLY valid JSON. No extra text.') },
-      { role: 'user', content: `Parse these ${messages.length} text messages. Remember: one message can have MULTIPLE workers — return a separate entry for each worker.\n\n${batch}` }
+      { role: 'user', content: `Parse these ${messages.length} text messages. One message can have MULTIPLE workers — return a separate entry for each.\n\n${batch}` }
     ],
     max_tokens: 2500,
     temperature: 0.1,
@@ -237,14 +235,12 @@ async function callGroq(useJsonMode) {
   const data = await res.json();
   const raw = data.choices?.[0]?.message?.content || '';
 
-  // Parse response — handle {entries: [...]}, bare array, or other wrapper keys
   let entries;
   try {
     const j = JSON.parse(raw);
     entries = Array.isArray(j) ? j : (j.entries || j.results || j.data || Object.values(j)[0]);
     if (!Array.isArray(entries)) throw new Error('Not an array');
   } catch (e) {
-    // Try extracting array from text
     const match = raw.match(/\[[\s\S]*\]/);
     if (!match) throw new Error('No JSON array found');
     entries = JSON.parse(match[0]);
@@ -259,13 +255,14 @@ async function callGroq(useJsonMode) {
 function buildResults(aiEntries) {
   const results = [];
 
-  aiEntries.forEach(ai => {
+  aiEntries.forEach((ai, idx) => {
     const msg = messages.find(m => m.id === ai.msgId);
     const rawText = msg ? msg.text : '';
     const sender = msg ? msg.sender : 'Unknown';
 
     if (!ai || ai.confidence === 'none' || !ai.hours) {
       results.push({
+        idx,
         msgId: ai.msgId,
         worker: ai?.worker || sender,
         date: '',
@@ -279,10 +276,16 @@ function buildResults(aiEntries) {
       });
     } else {
       const jobSite = ai.jobSite || 'Not specified';
-      const region = detectRegion(jobSite);
+      // Check if aunt has overridden the region for this city
+      let region = ai.region || 'unknown';
+      const cityKey = extractCity(jobSite);
+      if (cityKey && regionOverrides[cityKey]) {
+        region = regionOverrides[cityKey];
+      }
       const isFlagged = ai.confidence === 'low';
 
       results.push({
+        idx,
         msgId: ai.msgId,
         worker: ai.worker || sender,
         date: ai.date || localDateStr(),
@@ -301,7 +304,94 @@ function buildResults(aiEntries) {
 }
 
 // ================================================================
-//  FINISH PROCESSING — save, render, toast
+//  EXTRACT CITY from job site string (first word or known pattern)
+// ================================================================
+function extractCity(jobSite) {
+  if (!jobSite) return '';
+  // Try to grab the city — usually the first word(s) before the job description
+  const lower = jobSite.toLowerCase().trim();
+  // Check for two-word cities first
+  const twoWord = lower.match(/^(san diego|san francisco|san jose|santa ana|los angeles|long beach|chula vista|el cajon)/);
+  if (twoWord) return twoWord[1];
+  // Single word city
+  const oneWord = lower.match(/^([a-z]+)/);
+  return oneWord ? oneWord[1] : '';
+}
+
+// ================================================================
+//  CHANGE REGION — called when aunt clicks a region tag
+// ================================================================
+function changeRegion(idx, currentRegion) {
+  const regions = ['norcal', 'socal', 'sandiego'];
+  const labels = { norcal: 'NorCal', socal: 'SoCal', sandiego: 'San Diego' };
+  const nextIdx = (regions.indexOf(currentRegion) + 1) % regions.length;
+  const newRegion = regions[nextIdx];
+
+  const row = parsed.find(p => p.idx === idx);
+  if (!row) return;
+
+  // Save the override so this city is always correct next time
+  const cityKey = extractCity(row.jobSite);
+  if (cityKey) {
+    regionOverrides[cityKey] = newRegion;
+  }
+
+  // Update ALL rows with the same city
+  parsed.forEach(p => {
+    const pCity = extractCity(p.jobSite);
+    if (pCity && pCity === cityKey) {
+      p.region = newRegion;
+    }
+  });
+
+  saveState();
+  renderParsed();
+  showToast(`${cityKey ? cityKey.charAt(0).toUpperCase() + cityKey.slice(1) : 'Entry'} → ${labels[newRegion]}. Saved for next time.`);
+}
+
+// ================================================================
+//  APPROVE FLAGGED ROW — aunt reviewed it and it's good
+// ================================================================
+function approveRow(idx) {
+  const row = parsed.find(p => p.idx === idx);
+  if (!row) return;
+  row.status = 'clean';
+  row.flagReason = undefined;
+  saveState();
+  renderParsed();
+  showToast(`${row.worker} approved`);
+}
+
+// ================================================================
+//  EDIT FLAGGED ROW — inline edit then approve
+// ================================================================
+function saveEdit(idx) {
+  const row = parsed.find(p => p.idx === idx);
+  if (!row) return;
+
+  const card = document.querySelector(`[data-idx="${idx}"]`);
+  if (!card) return;
+
+  row.worker = card.querySelector('.edit-worker').value || row.worker;
+  row.date = card.querySelector('.edit-date').value || row.date;
+  row.hours = parseFloat(card.querySelector('.edit-hours').value) || row.hours;
+  row.jobSite = card.querySelector('.edit-site').value || row.jobSite;
+
+  // Re-detect region from updated job site (or use override)
+  const cityKey = extractCity(row.jobSite);
+  if (cityKey && regionOverrides[cityKey]) {
+    row.region = regionOverrides[cityKey];
+  }
+
+  row.status = 'clean';
+  row.flagReason = undefined;
+  saveState();
+  renderParsed();
+  showToast(`${row.worker} updated and approved`);
+}
+
+// ================================================================
+//  FINISH PROCESSING
 // ================================================================
 function finishProcessing() {
   saveState();
@@ -316,18 +406,7 @@ function finishProcessing() {
 }
 
 // ================================================================
-//  REGION DETECTION
-// ================================================================
-function detectRegion(jobSite) {
-  const lower = (jobSite || '').toLowerCase();
-  for (const [region, keywords] of Object.entries(REGION_MAP)) {
-    if (keywords.some(kw => lower.includes(kw))) return region;
-  }
-  return 'socal'; // default for demo
-}
-
-// ================================================================
-//  RENDER: PARSED RESULTS
+//  RENDER: PARSED RESULTS (TAB 1)
 // ================================================================
 function renderParsed() {
   const clean = parsed.filter(p => p.status === 'clean');
@@ -349,7 +428,7 @@ function renderParsed() {
       <td>${row.date}</td>
       <td>${row.hours}</td>
       <td>${escapeHtml(row.jobSite)}</td>
-      <td><span class="region-tag ${row.region}">${regionLabel(row.region)}</span></td>
+      <td><span class="region-tag ${row.region} clickable" onclick="changeRegion(${row.idx},'${row.region}')" title="Click to change region">${regionLabel(row.region)}</span></td>
     `;
     tbody.appendChild(tr);
   });
@@ -362,10 +441,18 @@ function renderParsed() {
   flagged.forEach(row => {
     const card = document.createElement('div');
     card.className = 'flagged-card';
+    card.dataset.idx = row.idx;
     card.innerHTML = `
       <div class="flag-raw">"${escapeHtml(row.raw)}"</div>
       <div class="flag-reason">⚠️ ${escapeHtml(row.flagReason)} — from ${escapeHtml(row.worker)}</div>
-      ${row.hours ? `<div style="margin-top:6px;font-size:12px;color:#c8cdd8;">AI's best guess: ${row.hours}hrs, ${escapeHtml(row.jobSite || 'no site')}, ${row.date || 'no date'}</div>` : ''}
+      <div class="flag-edit-row">
+        <input class="edit-input edit-worker" value="${escapeHtml(row.worker)}" placeholder="Worker name">
+        <input class="edit-input edit-date" type="date" value="${row.date}">
+        <input class="edit-input edit-hours" type="number" step="0.5" value="${row.hours || ''}" placeholder="Hours">
+        <input class="edit-input edit-site" value="${escapeHtml(row.jobSite)}" placeholder="Job site / city">
+        <button class="btn-approve" onclick="saveEdit(${row.idx})">Save & Approve</button>
+        ${row.hours ? `<button class="btn-approve-small" onclick="approveRow(${row.idx})">Approve As-Is</button>` : ''}
+      </div>
     `;
     flagList.appendChild(card);
   });
@@ -402,7 +489,7 @@ function renderHoursSheet(filter = '') {
       <td>${row.date || '—'}</td>
       <td>${row.hours || '—'}</td>
       <td>${escapeHtml(row.jobSite) || '—'}</td>
-      <td><span class="region-tag ${row.region}">${regionLabel(row.region)}</span></td>
+      <td><span class="region-tag ${row.region} clickable" onclick="changeRegion(${row.idx},'${row.region}')" title="Click to change region">${regionLabel(row.region)}</span></td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8892a8;font-size:12px;">${escapeHtml(row.raw)}</td>
       <td><span class="status-tag ${row.status}">${row.status === 'clean' ? '✅ Clean' : '⚠️ Review'}</span></td>
     `;
@@ -442,7 +529,7 @@ function renderRegionCards() {
       <div class="region-card-header ${region.color}">
         <div>
           <h3>${region.label}</h3>
-          <span style="font-size:12px;color:#8892a8;">${rows.length} worker${rows.length !== 1 ? 's' : ''}</span>
+          <span style="font-size:12px;color:#8892a8;">${rows.length} entr${rows.length !== 1 ? 'ies' : 'y'}</span>
         </div>
         <div style="text-align:right;">
           <div class="hours-total">${totalHours}</div>
@@ -452,7 +539,7 @@ function renderRegionCards() {
       <div class="region-card-body">
         ${rows.length ? `
           <table>
-            <thead><tr><th>Worker</th><th>Date</th><th>Hours</th><th>Job Site</th></tr></thead>
+            <thead><tr><th>Worker</th><th>Date</th><th>Hours</th><th>Job Site</th><th></th></tr></thead>
             <tbody>
               ${rows.map(r => `
                 <tr>
@@ -460,6 +547,7 @@ function renderRegionCards() {
                   <td>${r.date}</td>
                   <td>${r.hours}</td>
                   <td>${escapeHtml(r.jobSite)}</td>
+                  <td><span class="region-tag ${r.region} clickable" onclick="changeRegion(${r.idx},'${r.region}')" title="Click to change region">✎</span></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -509,7 +597,7 @@ function resetDemo() {
   storageSet('tlc_messages', messages);
   renderMessages();
   renderParsed();
-  showToast('Demo reset');
+  showToast('Demo reset — region corrections kept');
 }
 
 // ================================================================

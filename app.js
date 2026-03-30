@@ -286,7 +286,7 @@ async function callGroq(useJsonMode) {
       { role: 'system', content: PARSE_SYSTEM_PROMPT + (useJsonMode ? '' : '\n\nRespond with ONLY valid JSON. No extra text.') },
       { role: 'user', content: `Parse these ${messages.length} text messages. One message can have MULTIPLE workers — return a separate entry for each.\n\n${batch}` }
     ],
-    max_tokens: 2500,
+    max_tokens: 8000,
     temperature: 0.1,
   };
   if (useJsonMode) body.response_format = { type: 'json_object' };

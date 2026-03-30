@@ -18,19 +18,39 @@ const GROQ_PROXY = 'https://fittrack-proxy.aestheticcal22.workers.dev';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 // ================================================================
-//  DEMO DATA
+//  DEMO DATA — 15 fake workers, full week Mon-Fri (3/24-3/28)
+//  3 foremen, 3 crews across NorCal / SoCal / San Diego
 // ================================================================
 const DEMO_MESSAGES = [
-  { id: 1,  sender: 'Rick Salazar (Foreman)',  text: 'Anaheim loop install today — Luis 8, Jose 7.5, Mario 8, Mike 8.5',                     time: '3:45 PM' },
-  { id: 2,  sender: 'Rick Salazar (Foreman)',  text: 'Santa Ana ped heads crew: Carlos 8hrs, Ray 9hrs, Paul 8hrs',                            time: '3:52 PM' },
-  { id: 3,  sender: 'Dave Torres (Foreman)',   text: 'San Diego signal repair — David 10, Danny 9.5, Tony 7. Danny worked a half day friday too forgot to report that', time: '4:10 PM' },
-  { id: 4,  sender: 'Dave Torres (Foreman)',   text: 'Oceanside ped heads monday — Tony 7hrs, Jesse 6hrs',                                    time: '4:15 PM' },
-  { id: 5,  sender: 'Rick Salazar (Foreman)',  text: 'Sacramento loop replacement yesterday — Carlos 8, Ray 9, Paul 8',                       time: '4:30 PM' },
-  { id: 6,  sender: 'Rick Salazar (Foreman)',  text: 'SF traffic signal upgrade — Ray did 9 hours today',                                     time: '4:45 PM' },
-  { id: 7,  sender: 'Mario Delgado',           text: 'hey forgot yesterday. worked all day at the bakersfield site',                           time: '6:10 PM' },
-  { id: 8,  sender: 'Unknown Number',          text: '8 hours yesterday',                                                                      time: '7:01 PM' },
-  { id: 9,  sender: 'Jesse Ruiz',              text: 'hey i also did 6 hrs on the LA freeway job tuesday call me',                             time: '7:40 PM' },
-  { id: 10, sender: 'Mike Alvarez',            text: 'late entry — 8 and a half hours LA loop detection on wednesday',                         time: '8:15 PM' },
+  // ── MONDAY 3/24 ──
+  { id: 1,  sender: 'Rick Salazar (Foreman)',  text: 'Monday Anaheim loop install — Luis 8, Jose 8, Mario 8, Mike 8, Eddie 8',                time: '3:30 PM' },
+  { id: 2,  sender: 'Dave Torres (Foreman)',   text: 'San Diego signal repair monday — David 9, Danny 8, Tony 8, Jesse 8',                    time: '3:45 PM' },
+  { id: 3,  sender: 'Frank Molina (Foreman)',  text: 'Sacramento loop replacement mon: Carlos 8, Ray 8, Paul 8, Alex 8, Victor 8',            time: '4:00 PM' },
+
+  // ── TUESDAY 3/25 ──
+  { id: 4,  sender: 'Rick Salazar (Foreman)',  text: 'tuesday Santa Ana ped heads — Luis 8, Jose 7.5, Mario 8, Mike 9, Eddie 8',              time: '3:35 PM' },
+  { id: 5,  sender: 'Dave Torres (Foreman)',   text: 'Oceanside ped heads tue — David 8, Danny 9, Tony 8.5, Jesse 8',                         time: '3:50 PM' },
+  { id: 6,  sender: 'Frank Molina (Foreman)',  text: 'SF traffic signal upgrade tuesday Carlos 9 Ray 9 Paul 8 Alex 8.5 Victor 8',             time: '4:10 PM' },
+
+  // ── WEDNESDAY 3/26 ──
+  { id: 7,  sender: 'Rick Salazar (Foreman)',  text: 'wed LA loop detection crew: Luis 8, Jose 8, Mario 9, Mike 8, Eddie 7.5',                time: '3:40 PM' },
+  { id: 8,  sender: 'Dave Torres (Foreman)',   text: 'wednesday San Diego signal maint — David 10, Danny 8, Tony 9, Jesse 8.5',               time: '3:55 PM' },
+  { id: 9,  sender: 'Frank Molina (Foreman)',  text: 'Bakersfield loop install wed: Carlos 8 Ray 8.5 Paul 9 Alex 8 Victor 8',                 time: '4:15 PM' },
+
+  // ── THURSDAY 3/27 ──
+  { id: 10, sender: 'Rick Salazar (Foreman)',  text: 'Anaheim signal upgrade thursday — Luis 9, Jose 8, Mario 8, Mike 8.5, Eddie 8',          time: '3:30 PM' },
+  { id: 11, sender: 'Dave Torres (Foreman)',   text: 'thurs Chula Vista ped heads David 8 Danny 9.5 Tony 8 Jesse 9',                          time: '3:45 PM' },
+  { id: 12, sender: 'Frank Molina (Foreman)',  text: 'Sacramento loop repair thursday — Carlos 8, Ray 9, Paul 8, Alex 9, Victor 8.5',         time: '4:05 PM' },
+
+  // ── FRIDAY 3/28 ──
+  { id: 13, sender: 'Rick Salazar (Foreman)',  text: 'friday Irvine loop install Luis 8 Jose 8 Mario 7.5 Mike 8 Eddie 8',                     time: '3:25 PM' },
+  { id: 14, sender: 'Dave Torres (Foreman)',   text: 'San Diego signal repair fri — David 8, Danny 8, Tony 7, Jesse 6. Jesse left early',     time: '3:40 PM' },
+  { id: 15, sender: 'Frank Molina (Foreman)',  text: 'friday SF traffic signal — Carlos 8 Ray 8 Paul 8 Alex 8 Victor 8',                      time: '3:55 PM' },
+
+  // ── LATE / MESSY INDIVIDUAL TEXTS ──
+  { id: 16, sender: 'Mario Delgado',           text: 'hey forgot to tell rick i stayed an extra hour wednesday at the LA job',                  time: '6:10 PM' },
+  { id: 17, sender: 'Unknown Number',          text: '8 hours yesterday',                                                                      time: '7:01 PM' },
+  { id: 18, sender: 'Danny Flores',            text: 'late entry i also worked a half day last monday at the oceanside site forgot to tell dave',time: '8:15 PM' },
 ];
 
 // ================================================================

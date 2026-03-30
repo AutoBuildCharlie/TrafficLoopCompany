@@ -393,7 +393,9 @@ function extractCity(jobSite) {
 function changeRegion(idx, currentRegion) {
   const regions = ['norcal', 'socal', 'sandiego'];
   const labels = { norcal: 'NorCal', socal: 'SoCal', sandiego: 'San Diego' };
-  const newRegion = regions[(regions.indexOf(currentRegion) + 1) % regions.length];
+  // If current region is unknown or not in list, start at norcal
+  const curIdx = regions.indexOf(currentRegion);
+  const newRegion = regions[(curIdx + 1) % regions.length];
 
   const row = parsed.find(p => p.idx === idx);
   if (!row) return;
@@ -436,6 +438,9 @@ function saveEdit(idx) {
   row.hours = parseFloat(card.querySelector('.edit-hours').value) || row.hours;
   row.jobSite = card.querySelector('.edit-site').value || row.jobSite;
 
+  // Use region from dropdown if available, otherwise check overrides
+  const regionSelect = card.querySelector('.edit-region');
+  if (regionSelect) row.region = regionSelect.value;
   const cityKey = extractCity(row.jobSite);
   if (cityKey && regionOverrides[cityKey]) row.region = regionOverrides[cityKey];
 
@@ -502,6 +507,7 @@ function openManualEntry() {
   $('manual-worker').value = '';
   $('manual-hours').value = '';
   $('manual-site').value = '';
+  $('manual-region').value = 'socal';
   $('modal-add').style.display = 'flex';
   $('manual-worker').focus();
 }
@@ -589,6 +595,11 @@ function renderParsed() {
         <input class="edit-input edit-date" type="date" value="${row.date}">
         <input class="edit-input edit-hours" type="number" step="0.5" value="${row.hours || ''}" placeholder="Hours">
         <input class="edit-input edit-site" value="${escapeHtml(row.jobSite)}" placeholder="Job site / city">
+        <select class="edit-input edit-region" style="width:auto;">
+          <option value="socal" ${row.region === 'socal' ? 'selected' : ''}>SoCal</option>
+          <option value="norcal" ${row.region === 'norcal' ? 'selected' : ''}>NorCal</option>
+          <option value="sandiego" ${row.region === 'sandiego' ? 'selected' : ''}>San Diego</option>
+        </select>
         <button class="btn-approve" onclick="saveEdit(${row.idx})">Save & Approve</button>
         ${row.hours ? `<button class="btn-approve-small" onclick="approveRow(${row.idx})">Approve As-Is</button>` : ''}
         <button class="btn-delete" onclick="deleteRow(${row.idx})">✕</button>
@@ -793,9 +804,10 @@ function filterByPeriod(rows, period) {
 function exportCSV() {
   if (!parsed.length) { showToast('Nothing to export yet'); return; }
   const clean = parsed.filter(p => p.status === 'clean');
+  const esc = v => (v || '').replace(/"/g, '""');
   let csv = 'Worker,Date,Hours,Job Site,Region,Sent By,Status\n';
   clean.forEach(r => {
-    csv += `"${r.worker}","${r.date}",${r.hours},"${r.jobSite}","${regionLabel(r.region)}","${r.sentBy || ''}","${r.status}"\n`;
+    csv += `"${esc(r.worker)}","${r.date}",${r.hours},"${esc(r.jobSite)}","${regionLabel(r.region)}","${esc(r.sentBy)}","${r.status}"\n`;
   });
   const blob = new Blob([csv], { type: 'text/csv' });
   const a = document.createElement('a');

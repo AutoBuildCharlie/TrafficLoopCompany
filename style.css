@@ -156,6 +156,17 @@ input, select { font: inherit; }
   color: rgba(255,255,255,0.35);
   margin-top: 4px;
   text-align: right;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.extract-count {
+  background: rgba(34,197,94,0.15);
+  color: #4ade80;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
 }
 
 @keyframes bubbleIn {

@@ -4,7 +4,7 @@
 // localStorage keys:
 //
 // tlc_messages    → [{ id, sender, text, time }]
-// tlc_parsed      → [{ id, worker, date, hours, jobSite, region, raw, status: "clean"|"flagged", confidence, flagReason? }]
+// tlc_parsed      → [{ msgId, worker, date, hours, jobSite, region, raw, status: "clean"|"flagged", confidence, flagReason? }]
 //
 // External API: Groq via Cloudflare Worker proxy (fittrack-proxy.aestheticcal22.workers.dev)
 // Model: llama-3.3-70b-versatile
@@ -17,21 +17,22 @@ const GROQ_PROXY = 'https://fittrack-proxy.aestheticcal22.workers.dev';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 // ================================================================
-//  DEMO DATA — all natural/messy texts, no rigid format
+//  DEMO DATA — realistic foreman crew texts + individual worker texts
 // ================================================================
 const DEMO_MESSAGES = [
-  { id: 1,  sender: 'Luis Ramirez',    text: '8 hours today anaheim loop install',                   time: '6:42 AM' },
-  { id: 2,  sender: 'Jose Martinez',    text: 'jose 7.5hrs santa ana ped heads job',                  time: '6:55 AM' },
-  { id: 3,  sender: 'Mario Delgado',    text: 'worked all day at the anaheim site lol',               time: '7:10 AM' },
-  { id: 4,  sender: 'David Chen',       text: 'did 10 hours yesterday san diego signal repair',       time: '7:22 AM' },
-  { id: 5,  sender: 'Carlos Reyes',     text: 'carlos here. 8 hours sacramento loop replacement',     time: '7:30 AM' },
-  { id: 6,  sender: 'Ray Thompson',     text: 'SF traffic signal upgrade 9 hrs today',                time: '7:45 AM' },
-  { id: 7,  sender: 'Unknown Number',   text: '8 hours yesterday',                                    time: '8:01 AM' },
-  { id: 8,  sender: 'Mike Alvarez',     text: 'hey its mike. 8 and a half hours LA loop detection',   time: '8:15 AM' },
-  { id: 9,  sender: 'Tony Nguyen',      text: '7 hrs oceanside ped heads on monday',                  time: '8:28 AM' },
-  { id: 10, sender: 'Jesse Ruiz',       text: 'hey i did 6 hrs on the freeway job call me',           time: '8:40 AM' },
-  { id: 11, sender: 'Paul Gutierrez',   text: 'paul g - bakersfield loop install 8 hours 3/29',       time: '9:05 AM' },
-  { id: 12, sender: 'Danny Flores',     text: 'late entry forgot friday. 9.5 hours san diego signal', time: '9:18 AM' },
+  // Foreman crew texts — multiple workers in one message
+  { id: 1,  sender: 'Rick Salazar (Foreman)',  text: 'Anaheim loop install today — Luis 8, Jose 7.5, Mario 8, Mike 8.5',                     time: '3:45 PM' },
+  { id: 2,  sender: 'Rick Salazar (Foreman)',  text: 'Santa Ana ped heads crew: Carlos 8hrs, Ray 9hrs, Paul 8hrs',                            time: '3:52 PM' },
+  { id: 3,  sender: 'Dave Torres (Foreman)',   text: 'San Diego signal repair — David 10, Danny 9.5, Tony 7. Danny worked a half day friday too forgot to report that', time: '4:10 PM' },
+  { id: 4,  sender: 'Dave Torres (Foreman)',   text: 'Oceanside ped heads monday — Tony 7hrs, Jesse 6hrs',                                    time: '4:15 PM' },
+  { id: 5,  sender: 'Rick Salazar (Foreman)',  text: 'Sacramento loop replacement yesterday — Carlos 8, Ray 9, Paul 8',                       time: '4:30 PM' },
+  { id: 6,  sender: 'Rick Salazar (Foreman)',  text: 'SF traffic signal upgrade — Ray did 9 hours today',                                     time: '4:45 PM' },
+
+  // Individual worker texts — messy, casual
+  { id: 7,  sender: 'Mario Delgado',           text: 'hey forgot yesterday. worked all day at the bakersfield site',                           time: '6:10 PM' },
+  { id: 8,  sender: 'Unknown Number',          text: '8 hours yesterday',                                                                      time: '7:01 PM' },
+  { id: 9,  sender: 'Jesse Ruiz',              text: 'hey i also did 6 hrs on the LA freeway job tuesday call me',                             time: '7:40 PM' },
+  { id: 10, sender: 'Mike Alvarez',            text: 'late entry — 8 and a half hours LA loop detection on wednesday',                         time: '8:15 PM' },
 ];
 
 // Region mapping by job site keywords
@@ -120,14 +121,20 @@ function renderMessages() {
 
   messages.forEach(msg => {
     const bubble = document.createElement('div');
-    const parsedRow = parsed.find(p => p.id === msg.id);
-    const statusClass = parsedRow ? (parsedRow.status === 'clean' ? 'clean' : 'messy') : '';
+    const parsedRows = parsed.filter(p => p.msgId === msg.id);
+    const hasClean = parsedRows.some(p => p.status === 'clean');
+    const hasFlagged = parsedRows.some(p => p.status === 'flagged');
+    const statusClass = parsedRows.length ? (hasFlagged && !hasClean ? 'messy' : 'clean') : '';
     bubble.className = 'text-bubble ' + statusClass;
-    if (parsedRow) bubble.classList.add('parsed');
+    if (parsedRows.length) bubble.classList.add('parsed');
+
+    // Show how many workers were extracted from this message
+    const countTag = parsedRows.length > 1 ? `<span class="extract-count">${parsedRows.length} workers extracted</span>` : '';
+
     bubble.innerHTML = `
       <div class="sender">${escapeHtml(msg.sender)}</div>
       <div>${escapeHtml(msg.text)}</div>
-      <div class="time">${msg.time}</div>
+      <div class="time">${msg.time} ${countTag}</div>
     `;
     container.appendChild(bubble);
   });
@@ -139,22 +146,27 @@ function renderMessages() {
 // ================================================================
 //  AI SYSTEM PROMPT
 // ================================================================
-const PARSE_SYSTEM_PROMPT = `You are a text message parser for a traffic loop and electrical construction company in California. Workers text in their hours in casual, messy language. Your job is to extract structured data from each message.
+const PARSE_SYSTEM_PROMPT = `You are a text message parser for a traffic loop and electrical construction company in California. Foremen and workers text in hours in casual, messy language. Your job is to extract structured data from each message.
 
 Today's date is ${localDateStr()}.
 
-For EACH message, extract:
-- worker: the worker's name (use sender name if not in the text)
+IMPORTANT: A single message can contain MULTIPLE workers. Foremen often send crew texts like "Anaheim loop install — Luis 8, Jose 7.5, Mario 8". You must return a SEPARATE entry for EACH worker mentioned.
+
+A single message might also mention multiple days for the same worker (e.g. "Danny worked friday too"). Return separate entries for each day.
+
+For EACH worker entry, extract:
+- msgId: the message ID number from the [ID:X] tag
+- worker: the worker's full name if known, first name if that's all you have. Use sender name ONLY if the message is clearly about themselves (not a foreman reporting for others)
 - date: the work date in YYYY-MM-DD format. "today" = ${localDateStr()}. "yesterday" = yesterday's date. "monday", "friday" etc = most recent past occurrence. If unclear, use today.
 - hours: number of hours worked (decimal). "all day" = 8. "half day" = 4. "8 and a half" = 8.5.
-- jobSite: the job site or project description. If none given, use "Not specified"
-- confidence: "high" if you could extract all 4 fields clearly, "low" if you had to guess on any field
+- jobSite: the job site or project name. Use the city + job description from the message.
+- confidence: "high" if all 4 fields are clear, "low" if you had to guess on any field
 
-Respond with ONLY a JSON array. Each element:
-{"worker":"...","date":"YYYY-MM-DD","hours":0,"jobSite":"...","confidence":"high|low"}
+Respond with JSON: {"entries": [...]}
+Each entry: {"msgId":1,"worker":"...","date":"YYYY-MM-DD","hours":0,"jobSite":"...","confidence":"high|low"}
 
-If a message is truly unparseable (no hours info at all, just random text), return:
-{"worker":"...","date":"","hours":0,"jobSite":"","confidence":"none"}`;
+If a message is truly unparseable (no hours info at all), return:
+{"msgId":1,"worker":"...","date":"","hours":0,"jobSite":"","confidence":"none"}`;
 
 // ================================================================
 //  PROCESS MESSAGES WITH AI
@@ -168,99 +180,22 @@ async function processMessages() {
   isProcessing = true;
 
   const btn = $('btn-process');
-  btn.textContent = 'Reading messages...';
+  btn.textContent = 'AI is reading messages...';
   btn.disabled = true;
 
   try {
-    // Build the batch prompt
-    const batch = messages.map(m => `[ID:${m.id}] From: ${m.sender} — "${m.text}"`).join('\n');
-
-    const res = await fetch(GROQ_PROXY, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          { role: 'system', content: PARSE_SYSTEM_PROMPT },
-          { role: 'user', content: `Parse these ${messages.length} worker text messages:\n\n${batch}` }
-        ],
-        max_tokens: 1500,
-        temperature: 0.1,
-        response_format: { type: 'json_object' }
-      })
-    });
-
-    if (!res.ok) throw new Error(`API error: ${res.status}`);
-
-    const data = await res.json();
-    const raw = data.choices?.[0]?.message?.content || '';
-    let aiResults;
-
-    // Parse the AI response — handle both array and {results: [...]} formats
-    try {
-      const parsed_json = JSON.parse(raw);
-      aiResults = Array.isArray(parsed_json) ? parsed_json : (parsed_json.results || parsed_json.messages || parsed_json.data || Object.values(parsed_json)[0]);
-      if (!Array.isArray(aiResults)) throw new Error('Not an array');
-    } catch (e) {
-      console.error('AI response parse error:', raw);
-      throw new Error('Could not parse AI response');
-    }
-
-    // Map AI results back to messages
-    const results = [];
-    messages.forEach((msg, i) => {
-      const ai = aiResults[i];
-      if (!ai || ai.confidence === 'none' || !ai.hours) {
-        results.push({
-          id: msg.id,
-          worker: ai?.worker || msg.sender,
-          date: '',
-          hours: 0,
-          jobSite: '',
-          region: 'unknown',
-          raw: msg.text,
-          status: 'flagged',
-          confidence: 'none',
-          flagReason: ai ? 'AI couldn\'t extract hours — needs manual entry' : 'AI skipped this message',
-        });
-      } else {
-        const jobSite = ai.jobSite || 'Not specified';
-        const region = detectRegion(jobSite);
-        const isFlagged = ai.confidence === 'low';
-
-        results.push({
-          id: msg.id,
-          worker: ai.worker || msg.sender,
-          date: ai.date || localDateStr(),
-          hours: parseFloat(ai.hours) || 0,
-          jobSite,
-          region,
-          raw: msg.text,
-          status: isFlagged ? 'flagged' : 'clean',
-          confidence: ai.confidence,
-          flagReason: isFlagged ? 'AI had low confidence — please verify' : undefined,
-        });
-      }
-    });
-
-    parsed = results;
-    saveState();
-    renderMessages();
-
-    setTimeout(() => {
-      renderParsed();
-      const clean = parsed.filter(p => p.status === 'clean').length;
-      const flagged = parsed.filter(p => p.status === 'flagged').length;
-      showToast(`Done — ${clean} clean, ${flagged} need review`);
-    }, 400);
-
+    const aiEntries = await callGroq(true);
+    parsed = buildResults(aiEntries);
+    finishProcessing();
   } catch (err) {
     console.error('Process error:', err);
-    showToast('Error processing — trying again...');
-    // Fallback: try without JSON mode
+    showToast('Retrying without JSON mode...');
     try {
-      await processMessagesFallback();
+      const aiEntries = await callGroq(false);
+      parsed = buildResults(aiEntries);
+      finishProcessing();
     } catch (e2) {
+      console.error('Fallback error:', e2);
       showToast('Could not reach AI — check connection');
     }
   } finally {
@@ -271,67 +206,112 @@ async function processMessages() {
 }
 
 // ================================================================
-//  FALLBACK: retry without json_object response_format
+//  CALL GROQ — send all messages in one batch
 // ================================================================
-async function processMessagesFallback() {
+async function callGroq(useJsonMode) {
   const batch = messages.map(m => `[ID:${m.id}] From: ${m.sender} — "${m.text}"`).join('\n');
 
+  const body = {
+    model: GROQ_MODEL,
+    messages: [
+      { role: 'system', content: PARSE_SYSTEM_PROMPT + (useJsonMode ? '' : '\n\nIMPORTANT: Respond with ONLY valid JSON. No extra text.') },
+      { role: 'user', content: `Parse these ${messages.length} text messages. Remember: one message can have MULTIPLE workers — return a separate entry for each worker.\n\n${batch}` }
+    ],
+    max_tokens: 2500,
+    temperature: 0.1,
+  };
+  if (useJsonMode) body.response_format = { type: 'json_object' };
+
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 30000);
   const res = await fetch(GROQ_PROXY, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      messages: [
-        { role: 'system', content: PARSE_SYSTEM_PROMPT + '\n\nIMPORTANT: Respond with ONLY valid JSON. No extra text.' },
-        { role: 'user', content: `Parse these ${messages.length} worker text messages:\n\n${batch}` }
-      ],
-      max_tokens: 1500,
-      temperature: 0.1
-    })
+    signal: ctrl.signal,
+    body: JSON.stringify(body)
   });
+  clearTimeout(timeout);
 
-  if (!res.ok) throw new Error(`Fallback API error: ${res.status}`);
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
 
   const data = await res.json();
   const raw = data.choices?.[0]?.message?.content || '';
 
-  // Try to extract JSON from the response
-  const jsonMatch = raw.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error('No JSON found in fallback');
+  // Parse response — handle {entries: [...]}, bare array, or other wrapper keys
+  let entries;
+  try {
+    const j = JSON.parse(raw);
+    entries = Array.isArray(j) ? j : (j.entries || j.results || j.data || Object.values(j)[0]);
+    if (!Array.isArray(entries)) throw new Error('Not an array');
+  } catch (e) {
+    // Try extracting array from text
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error('No JSON array found');
+    entries = JSON.parse(match[0]);
+  }
 
-  const aiResults = JSON.parse(jsonMatch[0]);
+  return entries;
+}
 
+// ================================================================
+//  BUILD RESULTS — map AI entries to parsed rows
+// ================================================================
+function buildResults(aiEntries) {
   const results = [];
-  messages.forEach((msg, i) => {
-    const ai = aiResults[i];
+
+  aiEntries.forEach(ai => {
+    const msg = messages.find(m => m.id === ai.msgId);
+    const rawText = msg ? msg.text : '';
+    const sender = msg ? msg.sender : 'Unknown';
+
     if (!ai || ai.confidence === 'none' || !ai.hours) {
       results.push({
-        id: msg.id, worker: ai?.worker || msg.sender, date: '', hours: 0,
-        jobSite: '', region: 'unknown', raw: msg.text, status: 'flagged',
-        confidence: 'none', flagReason: 'AI couldn\'t extract hours — needs manual entry',
+        msgId: ai.msgId,
+        worker: ai?.worker || sender,
+        date: '',
+        hours: 0,
+        jobSite: '',
+        region: 'unknown',
+        raw: rawText,
+        status: 'flagged',
+        confidence: 'none',
+        flagReason: 'Couldn\'t extract hours — needs manual entry',
       });
     } else {
       const jobSite = ai.jobSite || 'Not specified';
       const region = detectRegion(jobSite);
       const isFlagged = ai.confidence === 'low';
+
       results.push({
-        id: msg.id, worker: ai.worker || msg.sender,
-        date: ai.date || localDateStr(), hours: parseFloat(ai.hours) || 0,
-        jobSite, region, raw: msg.text,
-        status: isFlagged ? 'flagged' : 'clean', confidence: ai.confidence,
-        flagReason: isFlagged ? 'AI had low confidence — please verify' : undefined,
+        msgId: ai.msgId,
+        worker: ai.worker || sender,
+        date: ai.date || localDateStr(),
+        hours: parseFloat(ai.hours) || 0,
+        jobSite,
+        region,
+        raw: rawText,
+        status: isFlagged ? 'flagged' : 'clean',
+        confidence: ai.confidence,
+        flagReason: isFlagged ? 'Low confidence — please verify' : undefined,
       });
     }
   });
 
-  parsed = results;
+  return results;
+}
+
+// ================================================================
+//  FINISH PROCESSING — save, render, toast
+// ================================================================
+function finishProcessing() {
   saveState();
   renderMessages();
   setTimeout(() => {
     renderParsed();
     const clean = parsed.filter(p => p.status === 'clean').length;
     const flagged = parsed.filter(p => p.status === 'flagged').length;
-    showToast(`Done — ${clean} clean, ${flagged} need review`);
+    const total = parsed.length;
+    showToast(`${total} entries from ${messages.length} texts — ${clean} clean, ${flagged} need review`);
   }, 400);
 }
 
